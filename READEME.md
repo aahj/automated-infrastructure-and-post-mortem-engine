@@ -1,0 +1,96 @@
+# Automated Infrastructure And Post-Mortem Engine
+---
+## The Complete System Architecture
+
+```mermaid
+graph TB
+    %% External Telemetry Sources & Ingress Gateway
+    subgraph INGRESS [INGRESS & TRIGGER GATEWAY]
+        PROM[Prometheus / Grafana Alert] -->|HTTP POST Webhook| API[FastAPI Gateway]
+        CW[AWS CloudWatch Alert] -->|HTTP POST Webhook| API
+        PD[PagerDuty Webhook] -->|HTTP POST Webhook| API
+    end
+
+    %% Orchestration Layer (LangGraph)
+    subgraph ORCH [ORCHESTRATION LAYER - LangGraph Stateful Workflow]
+        direction TB
+        
+        %% Entry Node
+        TP[triage_commander<br/>#40;Triage Commander#41;]
+        
+        %% Checkpoint Gate
+        HA{human_approval<br/>#40;Human Approval Gate#41;}
+        
+        %% Core Execution Nodes
+        LI[log_investigator<br/>#40;Log & Metrics Investigator#41;]
+        ME[mitigation_engineer<br/>#40;Mitigation Engineer#41;]
+        PMS[post_mortem_scribe<br/>#40;Post-Mortem Scribe#41;]
+        
+        %% Flow Connections
+        TP --> HA
+        HA -->|Approved / Auto-Escalate| LI
+        LI --> ME
+        ME -->|Resolved| PMS
+        ME -->|Needs More Data / Retry Loop| LI
+        
+        %% Checkpoint Storage
+        DB[(SQLite<br/>Checkpoint Store)] <--->|Persists State Per Node Execution| TP & HA & LI & ME & PMS
+    end
+
+    %% Webhook transfers raw payload straight to initial state graph execution
+    API -->|1. graph.ainvoke#40;raw_alert_payload#41;| TP
+
+    %% Observability & Quality Layer
+    subgraph OBS [OBSERVABILITY & QUALITY LAYER]
+        LF[Langfuse<br/>#40;Distributed Tracing#41;]
+        DE[DeepEval<br/>#40;Automated Quality Checks / LLM-as-a-Judge#41;]
+    end
+
+    %% Connect Orchestrator to Observability Callbacks
+    ORCH -.->|Emits Traces| LF
+    ME -.->|Validates Metrics via| DE
+    PMS -.->|Evaluates Report Tone via| DE
+
+    %% Decentralized Tool Layer (Model Context Protocol)
+    subgraph TOOL [TOOL LAYER - Multi-Source MCP Servers]
+        direction LR
+        LOKI_MCP[Loki/Elastic MCP Server<br/>#40;App Containers Logs & Metrics#41;]
+        DB_MCP[PostgreSQL MCP Server<br/>#40;DB Metrics, Locks, & Slow Queries#41;]
+        MEM_MCP[MCP Memory Server<br/>#40;Historical Incident Context#41;]
+    end
+
+    %% Agent-to-Tool mappings
+    LI ===>|1. Checks App Container Logs| LOKI_MCP
+    LI ===>|2. Cross-References DB State| DB_MCP
+    ME ===>|Reads/Writes Action History| MEM_MCP
+
+    %% Inference Layer (Ollama)
+    subgraph INF [INFERENCE LAYER - Ollama Local Host:11434]
+        LLM[qwen2.5 / qwen2.5-coder Models]
+    end
+
+    %% All LLM Nodes query Ollama
+    TP & LI & ME & PMS ---->|Local Inference Fan-In| LLM
+
+    %% External Delegation Layer (Agent-to-Agent Protocol)
+    subgraph A2A [A2A LAYER - Cross-Framework Protocol]
+        direction TB
+        PMS_SVC[Post-Mortem Scribe A2A Service<br/>#40;Port 9001#41;]
+        CREW_AGNT[CrewAI Document Specialist<br/>#40;Port 9002#41;]
+        PMS_SVC ===>|JSON-RPC 2.0 Handoff| CREW_AGNT
+    end
+
+    %% Graph Delegation Route
+    PMS ===>|Delegates Document Generation| PMS_SVC
+
+    %% Global Styling
+    classDef default fill:#1e1e2e,stroke:#45475a,stroke-width:2px,color:#cdd6f4;
+    classDef layer fill:#313244,stroke:#6c7086,stroke-width:1px,color:#cdd6f4;
+    classDef highlight fill:#fab387,stroke:#e64553,stroke-width:2px,color:#11111b;
+    classDef ingress fill:#a6e3a1,stroke:#40a02b,stroke-width:2px,color:#11111b;
+
+    class ORCH,OBS,TOOL,INF,A2A layer;
+    class HA highlight;
+    class INGRESS ingress;
+```
+---
