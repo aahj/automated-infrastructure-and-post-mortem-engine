@@ -1,7 +1,10 @@
-from typing import TypedDict, Annotated
+from datetime import datetime
+from time import timezone
+from typing import Annotated, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
+
 
 class AgentState(TypedDict):
     """
@@ -15,17 +18,40 @@ class AgentState(TypedDict):
     which appends to the list instead of overwrite.
 
     """
+
     messages: Annotated[list[BaseMessage], add_messages]
     session_id: str
     incident_id: str
     service_name: str
-    severity_level: str    # levels: "critical", "warning", "info"
-    incident_ocuured_at: str     # utc timestamp in string
+    severity_level: str  # levels: "critical", "warning", "info"
+    incident_ocuured_at: str  # utc timestamp in string
     raw_alert_payload: dict
-    error_summary: str # given by triage node
-    current_status: str # ["triaged","investigating","awaiting_approval","mitigating","resolved","failed_mitigation"]
-    root_cause: str # given by log & metric investigator node
-    diagnostics: dict # {"app_logs":[...], "db_logs":[...]}
+    error_summary: str  # given by triage node
+    current_status: str  # ["triaged","investigating","awaiting_approval","mitigating","resolved","failed_mitigation"]
+    root_cause: str  # given by log & metric investigator node
+    diagnostics: dict  # {"app_logs":[...], "db_logs":[...]}
     is_resolved: bool
     mitigation_plan: list[dict]
-    final_report: str # in markdown format
+    final_report: str  # in markdown format
+    internal_error: str | None
+
+
+def initial_state(raw_alert_payload: dict, session_id: str,) -> dict:
+    """Create initial state"""
+    return {
+        "messages": [],
+        "session_id": session_id,
+        "incident_id": session_id,
+        "service_name": "",
+        "severity_level": "",
+        "incident_ocuured_at": datetime.now(timezone).isoformat(),
+        "raw_alert_payload": raw_alert_payload,
+        "error_summary": "",
+        "current_status": "",
+        "root_cause": "",
+        "diagnostics": {},
+        "is_resolved": False,
+        "mitigation_plan": [],
+        "final_report": "",
+        "error": None
+    }
