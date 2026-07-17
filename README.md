@@ -1,5 +1,39 @@
 # Automated Infrastructure And Post-Mortem Engine
 ---
+## The LangGraph Flow
+```mermaid
+graph TD
+    %% Nodes
+    START([START]) --> triage_commander[triage_commander<br>#40;Triage Commander#41;]
+    
+    triage_commander --> log_investigator[log_investigator<br>#40;Log & Metrics Investigator#41;]
+    
+    log_investigator --> human_approval{human_approval<br>#40;Human Approval Gate#41;}
+    
+    mitigation_engineer[mitigation_engineer<br>#40;Mitigation Engineer#41;]
+    post_mortem_scribe[post_mortem_scribe<br>#40;Post-Mortem Scribe via A2A#41;]
+    
+    END([END])
+
+    %% Edge Transitions
+    human_approval -.->|approved = true| mitigation_engineer
+    human_approval -.->|approved = false / rejected| END
+    
+    mitigation_engineer -.->|is_resolved = false / retry| log_investigator
+    mitigation_engineer -.->|is_resolved = true| post_mortem_scribe
+    
+    post_mortem_scribe --> END
+
+    %% Styling
+    classDef default fill:#1f2937,stroke:#4b5563,stroke-width:2px,color:#f9fafb;
+    classDef startEnd fill:#10b981,stroke:#059669,stroke-width:2px,color:#fff;
+    classDef conditional fill:#f59e0b,stroke:#d97706,stroke-width:2px,color:#fff;
+    
+    class START,END startEnd;
+    class human_approval conditional;
+```
+
+---
 ## The Complete System Architecture
 
 ```mermaid
@@ -18,23 +52,28 @@ graph TB
         %% Entry Node
         TP[triage_commander<br/>#40;Triage Commander#41;]
         
-        %% Checkpoint Gate
+        %% Core Diagnostic Node (Read-Only)
+        LI[log_investigator<br/>#40;Log & Metrics Investigator#41;]
+        
+        %% Stateful Intercept (Write-Protection Gate)
         HA{human_approval<br/>#40;Human Approval Gate#41;}
         
-        %% Core Execution Nodes
-        LI[log_investigator<br/>#40;Log & Metrics Investigator#41;]
+        %% Core Action & Report Nodes
         ME[mitigation_engineer<br/>#40;Mitigation Engineer#41;]
         PMS[post_mortem_scribe<br/>#40;Post-Mortem Scribe#41;]
         
         %% Flow Connections
-        TP --> HA
-        HA -->|Approved / Auto-Escalate| LI
-        LI --> ME
+        TP --> LI
+        LI --> HA
+        HA -->|Approved / Execute Plan| ME
+        HA -->|Rejected / False Alarm| END_NODE([END])
+        
         ME -->|Resolved| PMS
-        ME -->|Needs More Data / Retry Loop| LI
+        ME -->|Failed / Needs More Data| LI
+        PMS --> END_NODE
         
         %% Checkpoint Storage
-        DB[(SQLite<br/>Checkpoint Store)] <--->|Persists State Per Node Execution| TP & HA & LI & ME & PMS
+        DB[(SQLite<br/>Checkpoint Store)] <--->|Persists State Per Node Execution| TP & LI & HA & ME & PMS
     end
 
     %% Webhook transfers raw payload straight to initial state graph execution
