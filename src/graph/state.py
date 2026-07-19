@@ -1,5 +1,4 @@
-from datetime import datetime
-from time import timezone
+from datetime import datetime, timezone
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import BaseMessage
@@ -48,7 +47,7 @@ def initial_state(
         "incident_id": session_id,
         "service_name": "",
         "severity_level": "",
-        "incident_ocuured_at": datetime.now(timezone).isoformat(),
+        "incident_ocuured_at": datetime.now(timezone.utc).isoformat(),
         "raw_alert_payload": raw_alert_payload,
         "error_summary": "",
         "current_status": "",
