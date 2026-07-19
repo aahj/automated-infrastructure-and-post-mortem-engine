@@ -1,10 +1,11 @@
 import os
-from pathlib import Path
 from enum import Enum
-import sqlite3
 
-from langgraph.graph import StateGraph, END, START
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.graph import END, START, StateGraph
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
+
 from agents.triage_commander import triage_node
 from graph.state import AgentState
 
@@ -29,9 +30,7 @@ def route_after_mitigation(state: dict) -> str:
     return NodeName.LOG_INVESTIGATOR.value
 
 
-def build_graph(db_path: str = "data/checkpoints.db", interrupt_before: list | None = None):
-    Path("data").mkdir(exist_ok=True)
-    db_path = os.getenv("CHECKPOINT_DB_PATH", db_path)
+async def build_graph(interrupt_before: list | None = None):
 
     builder = StateGraph(AgentState)
 
@@ -44,35 +43,50 @@ def build_graph(db_path: str = "data/checkpoints.db", interrupt_before: list | N
 
     # static edges
     builder.add_edge(START, NodeName.TRIAGE_COMMANDER.value)
-    builder.add_edge(NodeName.TRIAGE_COMMANDER.value, NodeName.LOG_INVESTIGATOR.value)
-    builder.add_edge(NodeName.LOG_INVESTIGATOR.value, NodeName.HUMAN_APPROVAL.value)
-    builder.add_edge(NodeName.POST_MORTEM.value, END)
+    builder.add_edge(
+        NodeName.TRIAGE_COMMANDER.value, END
+    )  # TODO: remove this edge when other nodes are implemented
+
+    # builder.add_edge(NodeName.TRIAGE_COMMANDER.value, NodeName.LOG_INVESTIGATOR.value)
+    # builder.add_edge(NodeName.LOG_INVESTIGATOR.value, NodeName.HUMAN_APPROVAL.value)
+    # builder.add_edge(NodeName.POST_MORTEM.value, END)
 
     # dynamic edges
-    builder.add_conditional_edges(
-        NodeName.HUMAN_APPROVAL.value,
-        route_after_approval,
-        {NodeName.MITIGATION_ENGINEER.value: NodeName.MITIGATION_ENGINEER.value, "end": END},
-    )
+    # builder.add_conditional_edges(
+    #     NodeName.HUMAN_APPROVAL.value,
+    #     route_after_approval,
+    #     {NodeName.MITIGATION_ENGINEER.value: NodeName.MITIGATION_ENGINEER.value, "end": END},
+    # )
 
-    builder.add_conditional_edges(
-        NodeName.MITIGATION_ENGINEER.value,
-        route_after_mitigation,
-        {
-            NodeName.POST_MORTEM.value: NodeName.POST_MORTEM.value,
-            NodeName.LOG_INVESTIGATOR.value: NodeName.LOG_INVESTIGATOR.value,
-        },
-    )
-    
+    # builder.add_conditional_edges(
+    #     NodeName.MITIGATION_ENGINEER.value,
+    #     route_after_mitigation,
+    #     {
+    #         NodeName.POST_MORTEM.value: NodeName.POST_MORTEM.value,
+    #         NodeName.LOG_INVESTIGATOR.value: NodeName.LOG_INVESTIGATOR.value,
+    #     },
+    # )
+
     # IMPORTANT: create the connection directly, not via context manager.
-    # SqliteSaver.from_conn_string() returns a context manager. If you use
-    # `with SqliteSaver.from_conn_string(...) as checkpointer:`, the connection
+    # AsyncPostgresSaver.from_conn_string() returns a context manager. If you use
+    # `with AsyncPostgresSaver.from_conn_string(...) as checkpointer:`, the connection
     # closes when the `with` block exits. The graph object lives longer than
     # build_graph(), so the connection must stay open for the process lifetime.
 
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    checkpointer = SqliteSaver(conn)
+    pool = AsyncConnectionPool(
+        conninfo=os.getenv("POSTGRES_CONNECTION_URI"),
+        kwargs={
+            "autocommit": True,
+            "row_factory": dict_row,
+        },
+        max_size=10,
+        open=False,  # open=False prevents it from connecting until we explicitly call .open()
+    )
+    await pool.open()
+
+    checkpointer = AsyncPostgresSaver(pool)
+    # Initialize checkpoint tables if they don't exist
+    await checkpointer.setup()
 
     return builder.compile(checkpointer, interrupt_before=interrupt_before)
-
-graph = build_graph()
+    # await pool.close()
