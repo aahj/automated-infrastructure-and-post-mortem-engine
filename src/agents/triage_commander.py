@@ -63,20 +63,25 @@ def triage_node(state: dict) -> dict:
     if not raw_alert_payload:
         return {"internal_error": "No raw alert payload provided"}
 
-    print("[TRIAGE COMMANDER]" f"Analyzing raw payload: {raw_alert_payload}")
+    print("[TRIAGE COMMANDER] " f"Analyzing raw payload: {raw_alert_payload}")
 
     llm = build_triage_llm()
     messages = [SystemMessage(content=PROMPT), HumanMessage(content=str(raw_alert_payload))]
 
-    print("[TRIAGE COMMANDER]" f"Calling Model: {MODEL_NAME}")
-    result = llm.invoke(messages)
+    print("[TRIAGE COMMANDER] " f"Calling Model: {MODEL_NAME}")
+
+    try:
+        result = llm.invoke(messages)
+    except Exception as e:
+        print("[TRIAGE COMMANDER] " f"LLM invoke error: {str(e)}")
+        return {"internal_error": str(e), "messages": messages}
 
     try:
         parsed_data = parsing_llm_response_json(result.content)
     except ValueError as e:
-        print("[TRIAGE COMMANDER]" f"Parse error: {str(e)}")
+        print("[TRIAGE COMMANDER] " f"Parse error: {str(e)}")
         return {"internal_error": str(e), "messages": messages + [result]}
 
-    print("[TRIAGE COMMANDER]" f"LLM have structured the alert payload: {str(parsed_data)}")
+    print("[TRIAGE COMMANDER] " f"LLM have structured the alert payload: {str(parsed_data)}")
 
     return {"messages": messages + [result], "internal_error": None, **parsed_data}
