@@ -5,17 +5,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import cast
 
-from fastapi import FastAPI, Request, status
-from psycopg.rows import dict_row
-from psycopg.types.json import Jsonb
-from psycopg_pool import AsyncConnectionPool
-
 # added src/ to python path before any imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+from fastapi import FastAPI, Request, status
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+from psycopg_pool import AsyncConnectionPool
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

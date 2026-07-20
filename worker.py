@@ -1,6 +1,15 @@
 import asyncio
 import os
 import signal
+import sys
+from pathlib import Path
+
+# added src/ to python path before any imports
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.rows import dict_row
@@ -8,6 +17,9 @@ from psycopg_pool import AsyncConnectionPool
 
 from graph.state import initial_state
 from graph.workflow import build_graph
+
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 keep_running = True
 CONNECTION_ESTABLISH_COOL_DOWN_PERIOD_SEC = 5
@@ -55,7 +67,7 @@ async def run_worker():
                             UPDATE incident_ingress_queue SET status= 'processing', locked_at = NOW()
                             WHERE id = (
                                 SELECT id FROM incident_ingress_queue WHERE status = 'pending'
-                                ORDER BY created ASC
+                                ORDER BY created_at ASC
                                 LIMIT 1
                                 FOR UPDATE SKIP LOCKED
                             )
@@ -117,3 +129,7 @@ async def run_worker():
                 )  # cool down before retrying connection establish
 
     print("[WORKER] " "Worker stopped gracefully")
+
+
+if __name__ == "__main__":
+    asyncio.run(run_worker())
