@@ -7,6 +7,7 @@ from typing import cast
 
 from fastapi import FastAPI, Request, status
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 # added src/ to python path before any imports
@@ -15,10 +16,6 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from dotenv import load_dotenv
 
 load_dotenv()
-
-from graph.state import initial_state
-from graph.workflow import build_graph
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,14 +46,15 @@ async def receive_alerts(request: Request):
     db_pool = cast(AsyncConnectionPool, request.app.state.db_pool)
     async with db_pool.connection() as conn:
         async with conn.cursor() as cur:
-            await cur.execute("select version();")
-            rows = await cur.fetchone()
-            print(rows)
+            await cur.execute(
+                """
+                INSERT INTO incident_ingress_queue (session_id, payload, status)
+                VALUES (%s, %s, 'pending')
+                """,
+                (
+                    session_id,
+                    Jsonb(raw_alert_payload),
+                ),
+            )
 
-    # state = initial_state(raw_alert_payload, session_id)
-
-    # graph = await build_graph()
-
-    # await graph.ainvoke(state, config={"configurable": {"thread_id": session_id}})
-
-    return {"success": True}
+    return {"success": True, "session_id": session_id}

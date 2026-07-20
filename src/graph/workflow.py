@@ -1,10 +1,7 @@
-import os
 from enum import Enum
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, START, StateGraph
-from psycopg.rows import dict_row
-from psycopg_pool import AsyncConnectionPool
 
 from agents.triage_commander import triage_node
 from graph.state import AgentState
@@ -30,7 +27,7 @@ def route_after_mitigation(state: dict) -> str:
     return NodeName.LOG_INVESTIGATOR.value
 
 
-async def build_graph(interrupt_before: list | None = None):
+async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list | None = None):
 
     builder = StateGraph(AgentState)
 
@@ -67,26 +64,4 @@ async def build_graph(interrupt_before: list | None = None):
     #     },
     # )
 
-    # IMPORTANT: create the connection directly, not via context manager.
-    # AsyncPostgresSaver.from_conn_string() returns a context manager. If you use
-    # `with AsyncPostgresSaver.from_conn_string(...) as checkpointer:`, the connection
-    # closes when the `with` block exits. The graph object lives longer than
-    # build_graph(), so the connection must stay open for the process lifetime.
-
-    pool = AsyncConnectionPool(
-        conninfo=os.getenv("POSTGRES_CONNECTION_URI"),
-        kwargs={
-            "autocommit": True,
-            "row_factory": dict_row,
-        },
-        max_size=10,
-        open=False,  # open=False prevents it from connecting until we explicitly call .open()
-    )
-    await pool.open()
-
-    checkpointer = AsyncPostgresSaver(pool)
-    # Initialize checkpoint tables if they don't exist
-    await checkpointer.setup()
-
     return builder.compile(checkpointer, interrupt_before=interrupt_before)
-    # await pool.close()
