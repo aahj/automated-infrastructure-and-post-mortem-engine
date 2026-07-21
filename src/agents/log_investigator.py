@@ -1,10 +1,11 @@
+import json
 import os
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 
 from constants import Agents
-from mcp.adapter import get_tools
+from _mcp.adapter import get_tools
 
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -47,6 +48,23 @@ Rules:
 - current_status must always be set to "investigating"
 """
 
+def parsing_llm_response_json(json_string: str) -> dict:
+    """Parse LLM JSON output"""
+    try:
+        data = json.loads(json_string)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            "LLM return invalid JSON.\n"
+            f"Error: {e}\n"
+            f"Printing first [300] char: {json_string[:300]}"
+        )
+
+    required_fields = ("root_cause", "diagnostics")
+    for field in required_fields:
+        if field not in data:
+            raise ValueError(f"Missing field in the LLM output: '{field}'")
+
+    return data
 
 async def build_log_investigator_llm() -> ChatOllama:
     tools = await get_tools(agent=Agents.LOG_INVESTIGATOR)
@@ -107,4 +125,14 @@ async def log_investigator_node(state: dict) -> dict:
     except Exception as e:
         print("[LOG INVESTIGATOR] " f"LLM invoke error: {str(e)}")
         return {"internal_error": str(e), "messages": messages}
+    
+    try:
+        parsed_data = parsing_llm_response_json(result.content)
+    except ValueError as e:
+        print("[LOG INVESTIGATOR] " f"Parse error: {str(e)}")
+        return {"internal_error": str(e), "messages": messages + [result]}
+
+    print("[LOG INVESTIGATOR] " f"LLM have investigated the alert incident: {str(parsed_data)}")
+
+    return {"messages": messages + [result], "internal_error": None, **parsed_data}
 
