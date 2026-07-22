@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import BaseMessage
@@ -36,10 +35,7 @@ class AgentState(TypedDict):
     approved: bool  # human approval
 
 
-def initial_state(
-    raw_alert_payload: dict,
-    session_id: str,
-) -> dict:
+def initial_state(raw_alert_payload: dict, session_id: str, incident_occurred_at: str) -> dict:
     """Create initial state"""
     return {
         "messages": [],
@@ -47,7 +43,7 @@ def initial_state(
         "incident_id": session_id,
         "service_name": "",
         "severity_level": "",
-        "incident_ocuured_at": datetime.now(timezone.utc).isoformat(),
+        "incident_ocuured_at": incident_occurred_at,
         "raw_alert_payload": raw_alert_payload,
         "error_summary": "",
         "current_status": "",

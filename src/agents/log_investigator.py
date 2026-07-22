@@ -37,6 +37,11 @@ When invoked with an incident payload, follow this systematic flow:
 
 ---
 
+### AVAILABLE MCP TOOLS
+You have access to the read-only MCP diagnostic tools.
+
+---
+
 ### INPUT DATA
 You will receive incident data structured as follow:
 - **SERVICE NAME:** {service_name}
@@ -131,7 +136,7 @@ async def log_investigator_node(state: dict) -> dict:
         severity_level=severity_level,
         incident_occurred_at=incident_occurred_at,
         error_summary=error_summary,
-        raw_alert_payload= str(raw_alert_payload)
+        raw_alert_payload=str(raw_alert_payload),
     )
     messages = [
         SystemMessage(content=PROMPT),

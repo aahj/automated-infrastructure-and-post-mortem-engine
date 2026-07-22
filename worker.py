@@ -2,7 +2,9 @@ import asyncio
 import os
 import signal
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 # added src/ to python path before any imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -71,7 +73,7 @@ async def run_worker():
                                 LIMIT 1
                                 FOR UPDATE SKIP LOCKED
                             )
-                            RETURNING id, session_id, payload
+                            RETURNING id, session_id, payload, created_at
                             """)
                         job = await cur.fetchone()
 
@@ -82,6 +84,9 @@ async def run_worker():
                 job_id = job["id"]
                 session_id = job["session_id"]
                 raw_alert_payload = job["payload"]
+                fallback_incident_timestamp = (
+                    cast(datetime, job["created_at"]).astimezone(timezone.utc).isoformat()
+                )
 
                 print(
                     "[WORKER] ", f"CLAIMED INCIDENT FOUND - job: {job_id}, session_id: {session_id}"
@@ -89,7 +94,9 @@ async def run_worker():
 
                 try:
                     # initializing state
-                    state = initial_state(raw_alert_payload, session_id)
+                    state = initial_state(
+                        raw_alert_payload, session_id, fallback_incident_timestamp
+                    )
 
                     # Invoking graph
                     await graph.ainvoke(state, config={"configurable": {"thread_id": session_id}})
