@@ -38,7 +38,7 @@ When invoked with an incident payload, follow this systematic flow:
 ---
 
 ### AVAILABLE MCP TOOLS
-You have access to the read-only MCP diagnostic tools.
+You have access to the read-only MCP diagnostic tools. Use them to query logs, metrics, and traces. Each tool returns structured data that you must analyze to support your root cause hypothesis.
 
 ---
 
@@ -47,17 +47,17 @@ You will receive incident data structured as follow:
 - **SERVICE NAME:** {service_name}
 - **SEVERITY LEVEL:** {severity_level}
 - **INCIDENT TIMESTAMP:** {incident_occurred_at}
-- **ERRO SUMMARY:** {error_summary}
+- **ERROR SUMMARY:** {error_summary}
 - **RAW ALERT PAYLOAD:** {raw_alert_payload}
 
 ---
 ### OUTPUT FORMAT REQUIREMENTS
 You must structure your analysis cleanly into the target JSON. The JSON must match this exact schema:
-{
+{{
     "root_cause": "A concise, probabilistic statement (e.g., '85% probability: DB connection pool exhaustion caused by unindexed orders query')",
     "current_status": "investigating",
-    "diagnostics" : "Key traces, metric anomalies, and failing queries found (e.g., {"app_logs":[...], "db_logs":[...]}). The type must be dict format"
-}
+    "diagnostics" : "Key traces, metric anomalies, and failing queries found (e.g., {{"app_logs":[...], "db_logs":[...]}}). The type must be dict format"
+}}
 
 Rules:
 - current_status must always be set to "investigating"
@@ -97,7 +97,7 @@ async def build_log_investigator_llm() -> ChatOllama:
         base_url=OLLAMA_BASE_URL,
         model=MODEL_NAME,
         format="json",
-        temperature=0.3,
+        temperature=0.4,
     ).bind_tools(tools)
 
 
@@ -114,7 +114,15 @@ async def log_investigator_node(state: dict) -> dict:
     error_summary = state["error_summary"]
     raw_alert_payload = state["raw_alert_payload"]
 
-    print({service_name, severity_level, incident_occurred_at, error_summary, raw_alert_payload})
+    print(
+        {
+            "service_name": service_name,
+            "severity_level": severity_level,
+            "incident_occurred_at": incident_occurred_at,
+            "error_summary": error_summary,
+            "raw_alert_payload": raw_alert_payload,
+        }
+    )
 
     if not severity_level or not incident_occurred_at or not error_summary or not raw_alert_payload:
         return {
@@ -131,7 +139,7 @@ async def log_investigator_node(state: dict) -> dict:
             "internal_error": "NO TOOL FOUND. Hence can't investigate the logs, EXITING NOW...."
         }
 
-    PROMPT = PROMPT.format(
+    INVESTIGATOR_PROMPT = PROMPT.format(
         service_name=service_name,
         severity_level=severity_level,
         incident_occurred_at=incident_occurred_at,
@@ -139,7 +147,7 @@ async def log_investigator_node(state: dict) -> dict:
         raw_alert_payload=str(raw_alert_payload),
     )
     messages = [
-        SystemMessage(content=PROMPT),
+        SystemMessage(content=INVESTIGATOR_PROMPT),
         HumanMessage(content="Investigate the incident. Begin by querying relevant logs."),
     ]
 

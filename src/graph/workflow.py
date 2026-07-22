@@ -51,7 +51,11 @@ async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list |
     builder.add_conditional_edges(
         NodeName.LOG_INVESTIGATOR.value,
         tools_condition,
-        {"tools": NodeName.LOG_INVESTIGATOR_TOOL.value, "__end__": NodeName.HUMAN_APPROVAL.value},
+        {
+            "tools": NodeName.LOG_INVESTIGATOR_TOOL.value,
+            #  "__end__": NodeName.HUMAN_APPROVAL.value
+            "__end__": END,  # TODO: remove this
+        },
     )
     # builder.add_conditional_edges(
     #     NodeName.HUMAN_APPROVAL.value,
