@@ -7,6 +7,8 @@ class NodeName(Enum):
     MITIGATION_ENGINEER = "mitigation_engineer"
     POST_MORTEM = "post_mortem_scribe"
     HUMAN_APPROVAL = "human_approval"
+    # tools node
+    LOG_INVESTIGATOR_TOOL = "log_investigator_tool"
 
 
 class Agents(Enum):

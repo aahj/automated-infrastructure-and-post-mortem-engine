@@ -2,10 +2,11 @@ import json
 import os
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
 
-from constants import Agents
 from _mcp.adapter import get_tools
+from constants import Agents
 
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -36,6 +37,15 @@ When invoked with an incident payload, follow this systematic flow:
 
 ---
 
+### INPUT DATA
+You will receive incident data structured as follow:
+- **SERVICE NAME:** {service_name}
+- **SEVERITY LEVEL:** {severity_level}
+- **INCIDENT TIMESTAMP:** {incident_occurred_at}
+- **ERRO SUMMARY:** {error_summary}
+- **RAW ALERT PAYLOAD:** {raw_alert_payload}
+
+---
 ### OUTPUT FORMAT REQUIREMENTS
 You must structure your analysis cleanly into the target JSON. The JSON must match this exact schema:
 {
@@ -47,6 +57,7 @@ You must structure your analysis cleanly into the target JSON. The JSON must mat
 Rules:
 - current_status must always be set to "investigating"
 """
+
 
 def parsing_llm_response_json(json_string: str) -> dict:
     """Parse LLM JSON output"""
@@ -66,10 +77,16 @@ def parsing_llm_response_json(json_string: str) -> dict:
 
     return data
 
-async def build_log_investigator_llm() -> ChatOllama:
+
+async def get_log_investigator_tools() -> list[BaseTool]:
     tools = await get_tools(agent=Agents.LOG_INVESTIGATOR)
     if not tools:
         raise ValueError("NO TOOL FOUND")
+    return tools
+
+
+async def build_log_investigator_llm() -> ChatOllama:
+    tools = await get_log_investigator_tools()
 
     return ChatOllama(
         base_url=OLLAMA_BASE_URL,
@@ -109,13 +126,16 @@ async def log_investigator_node(state: dict) -> dict:
             "internal_error": "NO TOOL FOUND. Hence can't investigate the logs, EXITING NOW...."
         }
 
+    PROMPT = PROMPT.format(
+        service_name=service_name,
+        severity_level=severity_level,
+        incident_occurred_at=incident_occurred_at,
+        error_summary=error_summary,
+        raw_alert_payload= str(raw_alert_payload)
+    )
     messages = [
         SystemMessage(content=PROMPT),
-        HumanMessage(content=f"""
-        Investigate the incident for service [{service_name}], severity level [{severity_level}], incident occurred at [{incident_occurred_at}], error summary [{error_summary}],
-        raw alert payload [{str(raw_alert_payload)}] .
-        Begin by querying relevant logs.
-        """),
+        HumanMessage(content="Investigate the incident. Begin by querying relevant logs."),
     ]
 
     print("[LOG INVESTIGATOR] " f"Calling Model: {MODEL_NAME}")
@@ -125,7 +145,12 @@ async def log_investigator_node(state: dict) -> dict:
     except Exception as e:
         print("[LOG INVESTIGATOR] " f"LLM invoke error: {str(e)}")
         return {"internal_error": str(e), "messages": messages}
-    
+
+    # if tools calls required
+    if result.tool_calls:
+        print("[LOG INVESTIGATOR] " f"LLM requires tool calling: {str(result.tool_calls)}")
+        return {"messages": messages + [result]}
+
     try:
         parsed_data = parsing_llm_response_json(result.content)
     except ValueError as e:
@@ -135,4 +160,3 @@ async def log_investigator_node(state: dict) -> dict:
     print("[LOG INVESTIGATOR] " f"LLM have investigated the alert incident: {str(parsed_data)}")
 
     return {"messages": messages + [result], "internal_error": None, **parsed_data}
-
