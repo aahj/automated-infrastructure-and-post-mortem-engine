@@ -5,6 +5,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
+from observability.langfuse_setup import get_langfuse_run, flush_langfuse
 
 # added src/ to python path before any imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -98,8 +99,10 @@ async def run_worker():
                         raw_alert_payload, session_id, fallback_incident_timestamp
                     )
 
-                    # Invoking graph
-                    await graph.ainvoke(state, config={"configurable": {"thread_id": session_id}})
+                    config, trace = get_langfuse_run(session_id)
+                    with trace:
+                        # Invoking graph
+                        await graph.ainvoke(state, config=config)
 
                     async with pool.connection() as con:
                         await con.execute(
@@ -134,6 +137,8 @@ async def run_worker():
                 await asyncio.sleep(
                     CONNECTION_ESTABLISH_COOL_DOWN_PERIOD_SEC
                 )  # cool down before retrying connection establish
+            finally:
+                flush_langfuse()
 
     print("[WORKER] " "Worker stopped gracefully")
 
