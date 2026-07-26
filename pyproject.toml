@@ -7,6 +7,9 @@ extend-exclude = '''
 # in the root of the project.
 ^/docs
 '''
+force-exclude = '''
+langfuse
+'''
 
 [tool.isort]
 profile = "black"

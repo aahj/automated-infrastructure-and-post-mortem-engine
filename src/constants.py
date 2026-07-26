@@ -9,8 +9,12 @@ class NodeName(Enum):
     HUMAN_APPROVAL = "human_approval"
     # tools node
     LOG_INVESTIGATOR_TOOL = "log_investigator_tool"
+    INCREMENT_TOOL_COUNTER = "increment_tool_counter"
 
 
 class Agents(Enum):
     LOG_INVESTIGATOR = "log_investigator"
     MITIGATION_ENGINEER = "mitigation_engineer"
+
+
+MAX_TOOL_ITERATION = 9

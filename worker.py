@@ -5,14 +5,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
-from observability.langfuse_setup import get_langfuse_run, flush_langfuse
-
-# added src/ to python path before any imports
-sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# added src/ to python path before any imports
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.rows import dict_row
@@ -20,6 +20,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from graph.state import initial_state
 from graph.workflow import build_graph
+from observability.langfuse_setup import flush_langfuse, get_langfuse_run
 
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -100,6 +101,7 @@ async def run_worker():
                     )
 
                     config, trace = get_langfuse_run(session_id)
+
                     with trace:
                         # Invoking graph
                         await graph.ainvoke(state, config=config)
