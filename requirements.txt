@@ -16,8 +16,8 @@ a2a-sdk==0.3.25
 
 
 python-dotenv==1.2.2
-
 fastapi[standard]==0.139.2
+pydantic==2.13.4
 
 # postgres
 psycopg==3.3.4

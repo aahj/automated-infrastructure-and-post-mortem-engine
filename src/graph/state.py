@@ -26,8 +26,8 @@ class AgentState(TypedDict):
     raw_alert_payload: dict
     error_summary: str  # given by triage node
     current_status: str  # ["triaged","investigating","awaiting_approval","mitigating","resolved","failed_mitigation"]
-    root_cause: str  # given by log & metric investigator node
-    diagnostics: dict  # {"app_logs":[...], "db_logs":[...]}
+    root_cause: str  # given by Evidence Synthesizer node
+    diagnostics: dict  # {"app_logs":[...], "db_logs":[...]}  - given by Evidence Synthesizer Node
     is_resolved: bool
     mitigation_plan: list[dict]
     final_report: str  # in markdown format

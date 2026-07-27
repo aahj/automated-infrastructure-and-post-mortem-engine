@@ -2,6 +2,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
+from agents.evidence_synthesizer import evidence_synthesizer_node
 from agents.log_investigator import get_log_investigator_tools, log_investigator_node
 from agents.triage_commander import triage_node
 from constants import MAX_TOOL_ITERATION, NodeName
@@ -45,6 +46,7 @@ async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list |
     ### REGISTER NODES
     builder.add_node(NodeName.TRIAGE_COMMANDER.value, triage_node)
     builder.add_node(NodeName.LOG_INVESTIGATOR.value, log_investigator_node)
+    builder.add_node(NodeName.EVIDENCE_SYNTHESIZER.value, evidence_synthesizer_node)
     builder.add_node(NodeName.LOG_INVESTIGATOR_TOOL.value, ToolNode(log_investigator_tools))
     builder.add_node(NodeName.INCREMENT_TOOL_COUNTER.value, increment_tool_iterations)
 
@@ -56,14 +58,15 @@ async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list |
     builder.add_edge(START, NodeName.TRIAGE_COMMANDER.value)
     builder.add_edge(NodeName.TRIAGE_COMMANDER.value, NodeName.LOG_INVESTIGATOR.value)
 
-    # builder.add_edge(
-    #     NodeName.LOG_INVESTIGATOR.value, END
-    # )  # TODO: remove this edge when other nodes are implemented
-
     # ReAct Loop: Investigator Tool Node must increment the tool iterations
     # and then route back to the Investigator Node to evaluate the tool output
     builder.add_edge(NodeName.LOG_INVESTIGATOR_TOOL.value, NodeName.INCREMENT_TOOL_COUNTER.value)
     builder.add_edge(NodeName.INCREMENT_TOOL_COUNTER.value, NodeName.LOG_INVESTIGATOR.value)
+    builder.add_edge(
+        NodeName.EVIDENCE_SYNTHESIZER.value,
+        # NodeName.HUMAN_APPROVAL.value
+        END,  # TODO: remove this when other nodes completed
+    )
 
     # builder.add_edge(NodeName.POST_MORTEM.value, END)
 
@@ -75,8 +78,7 @@ async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list |
         investigator_router,
         {
             "tools": NodeName.LOG_INVESTIGATOR_TOOL.value,
-            #  "__end__": NodeName.HUMAN_APPROVAL.value
-            "__end__": END,  # TODO: remove this
+            "__end__": NodeName.EVIDENCE_SYNTHESIZER.value,
         },
     )
 
