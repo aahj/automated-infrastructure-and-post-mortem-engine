@@ -61,5 +61,5 @@ def initial_state(raw_alert_payload: dict, session_id: str, incident_occurred_at
 
 def increment_tool_iterations(state: dict) -> dict:
     count = state.get("tool_iterations", 0) + 1
-    print(f"[TOOL LOOP] Iteration: {count}")
+    print(f"[TOOL LOOP] Iteration: {count}\n")
     return {"tool_iterations": count}
