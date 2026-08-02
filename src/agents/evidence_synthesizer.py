@@ -49,6 +49,7 @@ def build_llm() -> ChatOllama:
     return ChatOllama(
         base_url=OLLAMA_BASE_URL,
         model=MODEL_NAME,
+        format="json",
         temperature=0,  # 0 for deterministic structured JSON
     )
 
@@ -61,17 +62,23 @@ async def evidence_synthesizer_node(state: dict) -> dict:
     Writes: state["root_cause"], state["current_status"], state["diagnostics"], state["internal_error"]
     """
     print("[EVIDENCE SYNTHESIZER] " "Synthesizing the evidence....")
+
+    existing_messages = state.get("messages", [])
+    system_prompt = SystemMessage(content=SUMMARY_PROMPT)
+    filtered_history = [msg for msg in existing_messages if msg.type != "system"]
+
     llm = build_llm()
-    messages = [SystemMessage(content=SUMMARY_PROMPT), HumanMessage(content=state["messages"])]
+    input = filtered_history + [system_prompt]
+
     print("[EVIDENCE SYNTHESIZER] " f"Calling Model: {MODEL_NAME}")
 
-    result = await llm.ainvoke(messages)
+    result = await llm.ainvoke(input)
     try:
         parsed_data = parsing_llm_response_json(result.content)
     except ValueError as e:
         print("[EVIDENCE SYNTHESIZER] " f"Parse error: {str(e)}")
-        return {"internal_error": str(e), "messages": messages + [result]}
+        return {"internal_error": str(e), "messages": [system_prompt] + [result]}
 
     print("[EVIDENCE SYNTHESIZER] " f"LLM have synthesized the evidence: {str(parsed_data)}")
 
-    return {"messages": messages + [result], "internal_error": None, **parsed_data}
+    return {"messages": [system_prompt] + [result], "internal_error": None, **parsed_data}

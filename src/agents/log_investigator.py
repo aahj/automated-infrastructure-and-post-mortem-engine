@@ -53,6 +53,8 @@ Workflow
 - ambiguities
 """
 
+HUMAN_PROMPT = "Investigate the issue"
+
 
 async def get_log_investigator_tools() -> list[BaseTool]:
     tools = await get_tools(agent=Agents.LOG_INVESTIGATOR)
@@ -75,7 +77,7 @@ async def log_investigator_node(state: dict) -> dict:
     """
     LangGraph Node: Log Investigator
 
-    Reads: state["service_name"], state["severity_level"],state["incident_ocuured_at"],state["error_summary"],state["raw_alert_payload"]
+    Reads: state["service_name"], state["severity_level"], state["incident_ocuured_at"], state["error_summary"], state["raw_alert_payload"], state["messages"]
     Writes: state["internal_error"]
     """
     service_name = state["service_name"]
@@ -83,16 +85,17 @@ async def log_investigator_node(state: dict) -> dict:
     incident_occurred_at = state["incident_ocuured_at"]
     error_summary = state["error_summary"]
     raw_alert_payload = state["raw_alert_payload"]
+    existing_messages = state.get("messages", [])
 
-    print(
-        {
-            "service_name": service_name,
-            "severity_level": severity_level,
-            "incident_occurred_at": incident_occurred_at,
-            "error_summary": error_summary,
-            "raw_alert_payload": raw_alert_payload,
-        }
-    )
+    # print(
+    #     {
+    #         "service_name": service_name,
+    #         "severity_level": severity_level,
+    #         "incident_occurred_at": incident_occurred_at,
+    #         "error_summary": error_summary,
+    #         "raw_alert_payload": raw_alert_payload,
+    #     }
+    # )
 
     if not severity_level or not incident_occurred_at or not error_summary or not raw_alert_payload:
         return {
@@ -109,32 +112,49 @@ async def log_investigator_node(state: dict) -> dict:
             "internal_error": "NO TOOL FOUND. Hence can't investigate the logs, EXITING NOW...."
         }
 
-    messages = [
-        SystemMessage(
-            content=INVESTIGATOR_PROMPT.format(
-                service_name=service_name,
-                severity_level=severity_level,
-                incident_occurred_at=incident_occurred_at,
-                error_summary=error_summary,
-                raw_alert_payload=str(raw_alert_payload),
-            )
-        ),
-        HumanMessage(content="Investigate the issue"),
-    ]
+    system_prompt = SystemMessage(
+        content=INVESTIGATOR_PROMPT.format(
+            service_name=service_name,
+            severity_level=severity_level,
+            incident_occurred_at=incident_occurred_at,
+            error_summary=error_summary,
+            raw_alert_payload=str(raw_alert_payload),
+        )
+    )
+
+    # Filter out ANY previous SystemMessages (e.g., from the triage node)
+    # so the LLM doesn't get conflicting instructions.
+    filtered_history = [msg for msg in existing_messages if msg.type != "system"]
+
+    # Check if this is the first time the investigator node is running
+    is_first_iteration = not any(
+        isinstance(msg, HumanMessage) and msg.content == HUMAN_PROMPT
+        for msg in reversed(existing_messages)
+    )
 
     print("[LOG INVESTIGATOR] " f"Calling Model: {MODEL_NAME}")
 
-    try:
-        result = await llm.ainvoke(messages)
-    except Exception as e:
-        print("[LOG INVESTIGATOR] " f"LLM invoke error: {str(e)}")
-        return {"internal_error": str(e), "messages": messages}
+    if is_first_iteration:
+        # It's the first run: We need to append the command to the input
+        initial_command = HumanMessage(content=HUMAN_PROMPT)
+        input_to_llm = filtered_history + [system_prompt] + [initial_command]
 
-    # if tools calls required
-    if result.tool_calls:
-        print("[LOG INVESTIGATOR] " f"LLM requires tool calling: {str(result.tool_calls)}\n")
-        return {"messages": [result]}
+        try:
+            result = await llm.ainvoke(input_to_llm)
+        except Exception as e:
+            print(f"[LOG INVESTIGATOR] LLM invoke error: {str(e)}")
+            return {"internal_error": str(e)}
 
-    print("[LOG INVESTIGATOR] " "LLM have investigated the alert incident")
+        return {"messages": [system_prompt, initial_command, result], "internal_error": None}
 
-    return {"messages": [result], "internal_error": None}
+    else:
+        # It's a tool loop: The initial command and tool results are already in the filtered_history
+        input_to_llm = filtered_history
+
+        try:
+            result = await llm.ainvoke(input_to_llm)
+        except Exception as e:
+            print(f"[LOG INVESTIGATOR] LLM invoke error: {str(e)}")
+            return {"internal_error": str(e)}
+
+        return {"messages": [result], "internal_error": None}
