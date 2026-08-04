@@ -6,9 +6,11 @@ graph TD
     %% Nodes
     START([START]) --> triage_commander[triage_commander<br>#40;Triage Commander#41;]
     
-    triage_commander --> log_investigator[log_investigator<br>#40;Log & Metrics Investigator#41;]
+    triage_commander --> log_investigator[log_investigator<br>#40;Log & Metrics Investigator - ReAct Tool Loop#41;]
     
-    log_investigator --> human_approval{human_approval<br>#40;Human Approval Gate#41;}
+    log_investigator --> evidence_synthesizer[evidence_synthesizer<br>#40;Evidence Synthesizer#41;]
+
+    evidence_synthesizer --> human_approval{human_approval<br>#40;Human Approval Gate#41;}
     
     mitigation_engineer[mitigation_engineer<br>#40;Mitigation Engineer#41;]
     post_mortem_scribe[post_mortem_scribe<br>#40;Post-Mortem Scribe via A2A#41;]
@@ -45,17 +47,20 @@ graph TB
         PD[PagerDuty Webhook] -->|HTTP POST Webhook| API
     end
 
-    %% Orchestration Layer (LangGraph)
+    %% Orchestration Layer (LangGraph Stateful Workflow)
     subgraph ORCH [ORCHESTRATION LAYER - LangGraph Stateful Workflow]
         direction TB
         
         %% Entry Node
         TP[triage_commander<br/>#40;Triage Commander#41;]
         
-        %% Core Diagnostic Node (Read-Only)
-        LI[log_investigator<br/>#40;Log & Metrics Investigator#41;]
+        %% Core Diagnostic Node
+        LI[log_investigator<br/>#40;Log & Metrics Investigator - Tool ReAct Loop#41;]
+
+        %% Diagnostic Structuring Node
+        ES[evidence_synthesizer<br/>#40;Evidence Synthesizer#41;]
         
-        %% Stateful Intercept (Write-Protection Gate)
+        %% Stateful Intercept
         HA{human_approval<br/>#40;Human Approval Gate#41;}
         
         %% Core Action & Report Nodes
@@ -64,7 +69,8 @@ graph TB
         
         %% Flow Connections
         TP --> LI
-        LI --> HA
+        LI -->|Raw Tool Outputs| ES
+        ES -->|Structured Findings & Metrics| HA
         HA -->|Approved / Execute Plan| ME
         HA -->|Rejected / False Alarm| END_NODE([END])
         
@@ -72,8 +78,8 @@ graph TB
         ME -->|Failed / Needs More Data| LI
         PMS --> END_NODE
         
-        %% Checkpoint Storage
-        DB[(SQLite<br/>Checkpoint Store)] <--->|Persists State Per Node Execution| TP & LI & HA & ME & PMS
+        %% Checkpoint Storage 
+        DB[(PostgreSQL<br/>Async Checkpoint Store)] <--->|Persists State Per Node Execution| TP & LI & ES & HA & ME & PMS
     end
 
     %% Webhook transfers raw payload straight to initial state graph execution
@@ -87,6 +93,7 @@ graph TB
 
     %% Connect Orchestrator to Observability Callbacks
     ORCH -.->|Emits Traces| LF
+    ES -.->|Validates Synthesis Accuracy via| DE
     ME -.->|Validates Metrics via| DE
     PMS -.->|Evaluates Report Tone via| DE
 
@@ -109,7 +116,7 @@ graph TB
     end
 
     %% All LLM Nodes query Ollama
-    TP & LI & ME & PMS ---->|Local Inference Fan-In| LLM
+    TP & LI & ES & ME & PMS ---->|Local Inference Fan-In| LLM
 
     %% External Delegation Layer (Agent-to-Agent Protocol)
     subgraph A2A [A2A LAYER - Cross-Framework Protocol]
@@ -131,6 +138,28 @@ graph TB
     class ORCH,OBS,TOOL,INF,A2A layer;
     class HA highlight;
     class INGRESS ingress;
+
+    %% --------------------------------------------------
+    %% EDGE STYLING 
+    %% --------------------------------------------------
+    
+    %% Ingress webhook edges (Green)
+    linkStyle 0,1,2 stroke:#a6e3a1,stroke-width:2px,color:#a6e3a1
+
+    %% Internal Orchestration flow (Blue)
+    linkStyle 3,4,5,6,7,8,9,10 stroke:#89b4fa,stroke-width:2px,color:#89b4fa
+
+    %% DB Checkpoint links (Grey/Subdued)
+    linkStyle 11,12,13,14,15,16 stroke:#6c7086,stroke-width:1px,stroke-dasharray:5
+
+    %% Webhook to Graph execution (Red/Important)
+    linkStyle 17 stroke:#f38ba8,stroke-width:3px,color:#f38ba8
+
+    %% Observability callbacks (Purple)
+    linkStyle 18,19,20,21 stroke:#cba6f7,stroke-width:2px,color:#cba6f7
+
+    %% Tool Execution thick edges (Yellow/Orange)
+    linkStyle 22,23,24 stroke:#f9e2af,stroke-width:3px,color:#f9e2af
 ```
 
 **Agent 1:** Triage Commander (triage_commander) – Structure raw data, handles noisy payload ingestion and configures state routing.
