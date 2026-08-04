@@ -22,7 +22,7 @@ class AgentState(TypedDict):
     incident_id: str
     service_name: str
     severity_level: str  # levels: "critical", "warning", "info"
-    incident_ocuured_at: str  # utc timestamp in string
+    incident_occurred_at: str  # utc timestamp in string
     raw_alert_payload: dict
     error_summary: str  # given by triage node
     current_status: str  # ["triaged","investigating","awaiting_approval","mitigating","resolved","failed_mitigation"]
@@ -44,7 +44,7 @@ def initial_state(raw_alert_payload: dict, session_id: str, incident_occurred_at
         "incident_id": session_id,
         "service_name": "",
         "severity_level": "",
-        "incident_ocuured_at": incident_occurred_at,
+        "incident_occurred_at": incident_occurred_at,
         "raw_alert_payload": raw_alert_payload,
         "error_summary": "",
         "current_status": "",

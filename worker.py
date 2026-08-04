@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.types import Command
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
@@ -104,7 +105,31 @@ async def run_worker():
 
                     with trace:
                         # Invoking graph
-                        await graph.ainvoke(state, config=config)
+                        graph_res = await graph.ainvoke(state, config=config)
+                        while "__interrupt__" in graph_res:
+                            interrupt_payload = graph_res["__interrupt__"][0].value
+                            details = interrupt_payload.get("details", {})
+                            if details:
+                                print(f"\n{'='*60}")
+                                print("INCIDENT DETAILS:")
+                                print(f"{'='*60}")
+                                print(f"Incident ID: {details.get('incident_id')}")
+                                print(
+                                    f"Incident Occurred At: {details.get('incident_occurred_at')}"
+                                )
+                                print(f"Severity Level: {details.get('severity_level')}")
+                                print(f"Service Name: {details.get('service_name')}")
+                                print(f"Error Summary: {details.get('error_summary')}")
+                                print(f"Root Cause: {details.get('root_cause')}")
+                                print(f"Diagnostics: {str(details.get('diagnostics'))}")
+
+                            print(f"\n{interrupt_payload.get("prompt","Continue?")}")
+                            user_input = input("> ").strip()
+                            # Resume the graph with the user's decision.
+                            # Command(resume=value) is how you pass input back to the interrupted node.
+                            graph_res = await graph.ainvoke(
+                                Command(resume=user_input), config=config
+                            )
 
                     async with pool.connection() as con:
                         await con.execute(

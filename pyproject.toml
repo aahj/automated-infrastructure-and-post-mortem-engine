@@ -14,3 +14,4 @@ langfuse
 [tool.isort]
 profile = "black"
 ensure_newline_before_comments = true
+skip_glob = ["*/langfuse/*"]

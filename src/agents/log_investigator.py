@@ -77,12 +77,12 @@ async def log_investigator_node(state: dict) -> dict:
     """
     LangGraph Node: Log Investigator
 
-    Reads: state["service_name"], state["severity_level"], state["incident_ocuured_at"], state["error_summary"], state["raw_alert_payload"], state["messages"]
-    Writes: state["internal_error"]
+    Reads: state["service_name"], state["severity_level"], state["incident_occurred_at"], state["error_summary"], state["raw_alert_payload"], state["messages"]
+    Writes: state["internal_error"], state["current_status"]
     """
     service_name = state["service_name"]
     severity_level = state["severity_level"]
-    incident_occurred_at = state["incident_ocuured_at"]
+    incident_occurred_at = state["incident_occurred_at"]
     error_summary = state["error_summary"]
     raw_alert_payload = state["raw_alert_payload"]
     existing_messages = state.get("messages", [])
@@ -145,7 +145,11 @@ async def log_investigator_node(state: dict) -> dict:
             print(f"[LOG INVESTIGATOR] LLM invoke error: {str(e)}")
             return {"internal_error": str(e)}
 
-        return {"messages": [system_prompt, initial_command, result], "internal_error": None}
+        return {
+            "messages": [system_prompt, initial_command, result],
+            "internal_error": None,
+            "current_status": "investigating",
+        }
 
     else:
         # It's a tool loop: The initial command and tool results are already in the filtered_history
@@ -157,4 +161,4 @@ async def log_investigator_node(state: dict) -> dict:
             print(f"[LOG INVESTIGATOR] LLM invoke error: {str(e)}")
             return {"internal_error": str(e)}
 
-        return {"messages": [result], "internal_error": None}
+        return {"messages": [result], "internal_error": None, "current_status": "investigating"}

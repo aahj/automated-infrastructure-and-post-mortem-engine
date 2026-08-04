@@ -17,7 +17,7 @@ The JSON must match this exact schema:
 {
     "service_name": "The specific microservice, database, or infrastructure component flagged as the source of the anomaly (e.g., payment-service, auth-db)",
     "severity_level": "(e.g,. 'CRITICAL', 'WARNING', 'INFO')",
-    "incident_ocuured_at": "the timestamp in UTC when the incident was detected, in ISO 8601 format. If no timestamp is present, then leave it.",
+    "incident_occurred_at": "the timestamp in UTC when the incident was detected, in ISO 8601 format. If no timestamp is present, then leave it.",
     "error_summary": "A concise, generated title/summary of the issue used to seed human notifications.",
     "current_status": "triaged"
 }
@@ -57,10 +57,10 @@ def triage_node(state: dict) -> dict:
     LangGraph Node: Triage commander
 
     Reads: state["raw_alert_payload"]
-    Writes: state["service_name"], state["severity_level"], state["incident_ocuured_at"], state["error_summary"], state["internal_error"]
+    Writes: state["service_name"], state["severity_level"], state["incident_occurred_at"], state["error_summary"], state["internal_error"]
     """
     raw_alert_payload = state["raw_alert_payload"]
-    default_incident_timestamp = state["incident_ocuured_at"]  # timestamp from initial state
+    default_incident_timestamp = state["incident_occurred_at"]  # timestamp from initial state
 
     if not raw_alert_payload:
         return {"internal_error": "No raw alert payload provided"}
@@ -84,8 +84,8 @@ def triage_node(state: dict) -> dict:
         print("[TRIAGE COMMANDER] " f"Parse error: {str(e)}")
         return {"internal_error": str(e), "messages": messages + [result]}
 
-    parsed_data["incident_ocuured_at"] = (
-        parsed_data["incident_ocuured_at"] or default_incident_timestamp
+    parsed_data["incident_occurred_at"] = (
+        parsed_data["incident_occurred_at"] or default_incident_timestamp
     )
 
     print("[TRIAGE COMMANDER] " f"LLM have structured the alert payload: {str(parsed_data)}")
