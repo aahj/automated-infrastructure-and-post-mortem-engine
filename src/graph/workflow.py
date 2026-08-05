@@ -3,6 +3,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from agents.evidence_synthesizer import evidence_synthesizer_node
+from agents.human_approval import human_approval_node
 from agents.log_investigator import get_log_investigator_tools, log_investigator_node
 from agents.triage_commander import triage_node
 from constants import MAX_TOOL_ITERATION, NodeName
@@ -11,7 +12,8 @@ from graph.state import AgentState, increment_tool_iterations
 
 def route_after_approval(state: dict) -> str:
     if state.get("approved", False):
-        return NodeName.MITIGATION_ENGINEER.value
+        # return NodeName.MITIGATION_ENGINEER.value
+        return "end"  # TODO: remove this when other nodes completed
     return "end"
 
 
@@ -50,7 +52,7 @@ async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list |
     builder.add_node(NodeName.LOG_INVESTIGATOR_TOOL.value, ToolNode(log_investigator_tools))
     builder.add_node(NodeName.INCREMENT_TOOL_COUNTER.value, increment_tool_iterations)
 
-    # builder.add_node(NodeName.HUMAN_APPROVAL.value, human_approval_node)
+    builder.add_node(NodeName.HUMAN_APPROVAL.value, human_approval_node)
     # builder.add_node(NodeName.MITIGATION_ENGINEER.value, mitigation_engineer_node)
     # builder.add_node(NodeName.POST_MORTEM.value, post_mortem_scribe_node)
 
@@ -62,11 +64,7 @@ async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list |
     # and then route back to the Investigator Node to evaluate the tool output
     builder.add_edge(NodeName.LOG_INVESTIGATOR_TOOL.value, NodeName.INCREMENT_TOOL_COUNTER.value)
     builder.add_edge(NodeName.INCREMENT_TOOL_COUNTER.value, NodeName.LOG_INVESTIGATOR.value)
-    builder.add_edge(
-        NodeName.EVIDENCE_SYNTHESIZER.value,
-        # NodeName.HUMAN_APPROVAL.value
-        END,  # TODO: remove this when other nodes completed
-    )
+    builder.add_edge(NodeName.EVIDENCE_SYNTHESIZER.value, NodeName.HUMAN_APPROVAL.value)
 
     # builder.add_edge(NodeName.POST_MORTEM.value, END)
 
@@ -82,11 +80,11 @@ async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list |
         },
     )
 
-    # builder.add_conditional_edges(
-    #     NodeName.HUMAN_APPROVAL.value,
-    #     route_after_approval,
-    #     {NodeName.MITIGATION_ENGINEER.value: NodeName.MITIGATION_ENGINEER.value, "end": END},
-    # )
+    builder.add_conditional_edges(
+        NodeName.HUMAN_APPROVAL.value,
+        route_after_approval,
+        {NodeName.MITIGATION_ENGINEER.value: NodeName.MITIGATION_ENGINEER.value, "end": END},
+    )
 
     # builder.add_conditional_edges(
     #     NodeName.MITIGATION_ENGINEER.value,
