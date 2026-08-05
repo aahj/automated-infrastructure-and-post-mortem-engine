@@ -2,6 +2,7 @@ import asyncio
 import os
 import signal
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -34,6 +35,8 @@ def handle_exit(signum, frame):
     global keep_running
     print("[WORKER] " "Received termination signal")
     keep_running = False
+    time.sleep(1)
+    sys.exit(0)
 
 
 signal.signal(signal.SIGINT, handle_exit)
