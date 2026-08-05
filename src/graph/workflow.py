@@ -30,7 +30,7 @@ def investigator_router(state: dict) -> str:
     if current_tool_iterations >= MAX_TOOL_ITERATION:
         print(
             "[CIRCUIT BREAKER] "
-            f"Terminating the tool iteration. Reached {current_tool_iterations} iteration(s)"
+            f"LLM requested tool; terminating the tool iteration. Reached {current_tool_iterations} iteration(s)\n"
         )
         return "__end__"
 
@@ -83,7 +83,10 @@ async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list |
     builder.add_conditional_edges(
         NodeName.HUMAN_APPROVAL.value,
         route_after_approval,
-        {NodeName.MITIGATION_ENGINEER.value: NodeName.MITIGATION_ENGINEER.value, "end": END},
+        {
+            # NodeName.MITIGATION_ENGINEER.value: NodeName.MITIGATION_ENGINEER.value, # TODO: uncomment this when mitigation engineer is implemented
+            "end": END
+        },
     )
 
     # builder.add_conditional_edges(

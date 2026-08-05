@@ -43,9 +43,9 @@ def human_approval_node(state: dict) -> dict:
     approved = str(decision).lower().strip() in ("yes", "y", "approve")
 
     if approved:
-        print(f"\n[Human Approval] Approved to mitigate the issue...")
+        print(f"\n[Human Approval] Approved to mitigate the issue...\n")
     else:
-        print(f"\n[Human Approval] Rejected and leaving for manual investigation...")
+        print(f"\n[Human Approval] Rejected and leaving for manual investigation...\n")
 
         # LangGraph 1.1.0: after Command(resume=...), the next node receives only
         # the keys returned by this node. Not the full pre-interrupt checkpoint.
