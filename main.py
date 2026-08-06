@@ -59,3 +59,20 @@ async def receive_alerts(request: Request):
             )
 
     return {"success": True, "session_id": session_id}
+
+
+@app.get("/incident/awaiting-approval")
+async def get_all_awaiting_approval_jobs(request: Request):
+    db_pool = cast(AsyncConnectionPool, request.app.state.db_pool)
+    async with db_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT * FROM incident_ingress_queue WHERE status = %s", ("awaiting_approval",)
+            )
+            jobs = await cur.fetchall()
+
+    return {"success": True, "data": {"jobs": jobs}}
+
+@app.get("/incident/{incident_id}/review")
+async def get_incident_for_review():
+    pass
