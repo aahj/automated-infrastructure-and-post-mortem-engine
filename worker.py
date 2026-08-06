@@ -9,6 +9,8 @@ from typing import cast
 
 from dotenv import load_dotenv
 
+from constants import CONNECTION_ESTABLISH_COOL_DOWN_PERIOD_SEC, MAX_CONCURRENT_JOBS
+
 load_dotenv()
 
 # added src/ to python path before any imports
@@ -16,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.types import Command
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
@@ -28,7 +29,6 @@ if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 keep_running = True
-CONNECTION_ESTABLISH_COOL_DOWN_PERIOD_SEC = 5
 
 
 def handle_exit(signum, frame):
@@ -41,6 +41,90 @@ def handle_exit(signum, frame):
 
 signal.signal(signal.SIGINT, handle_exit)
 signal.signal(signal.SIGTERM, handle_exit)
+
+semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)  # limit concurrent jobs
+
+
+async def process_job(job, pool: AsyncConnectionPool, graph):
+    async with semaphore:
+        job_id = job["id"]
+        session_id = job["session_id"]
+        raw_alert_payload = job["payload"]
+        fallback_incident_timestamp = (
+            cast(datetime, job["created_at"]).astimezone(timezone.utc).isoformat()
+        )
+
+        print("[WORKER] ", f"CLAIMED INCIDENT FOUND - job: {job_id}, session_id: {session_id}")
+
+        try:
+            # initializing state
+            state = initial_state(raw_alert_payload, session_id, fallback_incident_timestamp)
+
+            config, trace = get_langfuse_run(session_id)
+
+            with trace:
+                # Invoking graph
+                graph_res = await graph.ainvoke(state, config=config)
+                if "__interrupt__" in graph_res:
+                    print(
+                        f"[WORKER] Job: {job_id}, session_id: {session_id} hit interrupt gate. Saving state and releasing worker."
+                    )
+                    async with pool.connection() as con:
+                        await con.execute(
+                            "UPDATE incident_ingress_queue SET status = %s WHERE id = %s",
+                            (
+                                "awaiting_approval",
+                                job_id,
+                            ),
+                        )
+                    return
+
+                    # interrupt_payload = graph_res["__interrupt__"][0].value
+                    # details = interrupt_payload.get("details", {})
+                    # if details:
+                    #     print(f"\n{'='*60}")
+                    #     print("INCIDENT DETAILS:")
+                    #     print(f"{'='*60}")
+                    #     print(f"Incident ID: {details.get('incident_id')}")
+                    #     print(f"Incident Occurred At: {details.get('incident_occurred_at')}")
+                    #     print(f"Severity Level: {details.get('severity_level')}")
+                    #     print(f"Service Name: {details.get('service_name')}")
+                    #     print(f"Error Summary: {details.get('error_summary')}")
+                    #     print(f"Root Cause: {details.get('root_cause')}")
+                    #     print(f"Diagnostics: {str(details.get('diagnostics'))}")
+
+                    # print(f"\n{interrupt_payload.get("prompt","Continue?")}")
+                    # user_input = input("> ").strip()
+                    # # Resume the graph with the user's decision.
+                    # # Command(resume=value) is how you pass input back to the interrupted node.
+                    # graph_res = await graph.ainvoke(Command(resume=user_input), config=config)
+
+            async with pool.connection() as con:
+                await con.execute(
+                    """
+                    UPDATE incident_ingress_queue SET status= 'completed' WHERE id = %s
+                    """,
+                    (job_id,),
+                )
+            print(
+                "[WORKER] "
+                f"LangGraph graph workflow execution completed for job: {job_id}, session_id: {session_id}"
+            )
+
+        except Exception as e:
+            print(
+                "[WORKER] "
+                f"LangGraph graph workflow execution encountered an error for job: {job_id}, session_id: {session_id}: {str(e)}"
+            )
+            # update the job status to 'failed'
+            async with pool.connection() as con:
+                await con.execute(
+                    """
+                    UPDATE incident_ingress_queue SET status= 'failed', retry_count = retry_count + 1
+                    WHERE id = %s
+                    """,
+                    (job_id,),
+                )
 
 
 async def run_worker():
@@ -68,98 +152,28 @@ async def run_worker():
         print("[WORKER] " "LangGraph compiled!")
         while keep_running:
             try:
-                job = None
-                async with pool.connection() as con:
-                    async with con.cursor() as cur:
-                        await cur.execute("""
-                            UPDATE incident_ingress_queue SET status= 'processing', locked_at = NOW()
-                            WHERE id = (
-                                SELECT id FROM incident_ingress_queue WHERE status = 'pending'
-                                ORDER BY created_at ASC
-                                LIMIT 1
-                                FOR UPDATE SKIP LOCKED
-                            )
-                            RETURNING id, session_id, payload, created_at
-                            """)
-                        job = await cur.fetchone()
-
-                if not job:
-                    await asyncio.sleep(1)
-                    continue
-
-                job_id = job["id"]
-                session_id = job["session_id"]
-                raw_alert_payload = job["payload"]
-                fallback_incident_timestamp = (
-                    cast(datetime, job["created_at"]).astimezone(timezone.utc).isoformat()
-                )
-
-                print(
-                    "[WORKER] ", f"CLAIMED INCIDENT FOUND - job: {job_id}, session_id: {session_id}"
-                )
-
-                try:
-                    # initializing state
-                    state = initial_state(
-                        raw_alert_payload, session_id, fallback_incident_timestamp
-                    )
-
-                    config, trace = get_langfuse_run(session_id)
-
-                    with trace:
-                        # Invoking graph
-                        graph_res = await graph.ainvoke(state, config=config)
-                        while "__interrupt__" in graph_res:
-                            interrupt_payload = graph_res["__interrupt__"][0].value
-                            details = interrupt_payload.get("details", {})
-                            if details:
-                                print(f"\n{'='*60}")
-                                print("INCIDENT DETAILS:")
-                                print(f"{'='*60}")
-                                print(f"Incident ID: {details.get('incident_id')}")
-                                print(
-                                    f"Incident Occurred At: {details.get('incident_occurred_at')}"
+                if not semaphore.locked():
+                    job = None
+                    async with pool.connection() as con:
+                        async with con.cursor() as cur:
+                            await cur.execute("""
+                                UPDATE incident_ingress_queue SET status= 'processing', locked_at = NOW()
+                                WHERE id = (
+                                    SELECT id FROM incident_ingress_queue WHERE status = 'pending'
+                                    ORDER BY created_at ASC
+                                    LIMIT 1
+                                    FOR UPDATE SKIP LOCKED
                                 )
-                                print(f"Severity Level: {details.get('severity_level')}")
-                                print(f"Service Name: {details.get('service_name')}")
-                                print(f"Error Summary: {details.get('error_summary')}")
-                                print(f"Root Cause: {details.get('root_cause')}")
-                                print(f"Diagnostics: {str(details.get('diagnostics'))}")
+                                RETURNING id, session_id, payload, created_at
+                                """)
+                            job = await cur.fetchone()
 
-                            print(f"\n{interrupt_payload.get("prompt","Continue?")}")
-                            user_input = input("> ").strip()
-                            # Resume the graph with the user's decision.
-                            # Command(resume=value) is how you pass input back to the interrupted node.
-                            graph_res = await graph.ainvoke(
-                                Command(resume=user_input), config=config
-                            )
-
-                    async with pool.connection() as con:
-                        await con.execute(
-                            """
-                            UPDATE incident_ingress_queue SET status= 'completed' WHERE id = %s
-                            """,
-                            (job_id,),
-                        )
-                    print(
-                        "[WORKER] "
-                        f"LangGraph graph workflow execution completed for job: {job_id}, session_id: {session_id}"
-                    )
-
-                except Exception as e:
-                    print(
-                        "[WORKER] "
-                        f"LangGraph graph workflow execution encountered an error for job: {job_id}, session_id: {session_id}: {str(e)}"
-                    )
-                    # update the job status to 'failed'
-                    async with pool.connection() as con:
-                        await con.execute(
-                            """
-                            UPDATE incident_ingress_queue SET status= 'failed', retry_count = retry_count + 1
-                            WHERE id = %s
-                            """,
-                            (job_id,),
-                        )
+                    if job:
+                        # spawn a background task to process the job
+                        asyncio.create_task(process_job(job, pool, graph))
+                    else:
+                        # No jobs or lock acquired
+                        await asyncio.sleep(1)
 
             except Exception as e:
                 print("[WORKER] " f"Queue polling worker encountered an error: {str(e)}")

@@ -41,10 +41,13 @@ graph TD
 ```mermaid
 graph TB
     %% External Telemetry Sources & Ingress Gateway
-    subgraph INGRESS [INGRESS & TRIGGER GATEWAY]
+    subgraph INGRESS [INGRESS & QUEUE LAYER]
         PROM[Prometheus / Grafana Alert] -->|HTTP POST Webhook| API[FastAPI Gateway]
         CW[AWS CloudWatch Alert] -->|HTTP POST Webhook| API
         PD[PagerDuty Webhook] -->|HTTP POST Webhook| API
+        
+        API -->|1. Inserts 'pending' job| QUEUE[(PostgreSQL Alert Queue)]
+        WORKER[Background Worker / Runner] -->|2. Polls & Claims Job| QUEUE
     end
 
     %% Orchestration Layer (LangGraph Stateful Workflow)
@@ -82,8 +85,8 @@ graph TB
         DB[(PostgreSQL<br/>Async Checkpoint Store)] <--->|Persists State Per Node Execution| TP & LI & ES & HA & ME & PMS
     end
 
-    %% Webhook transfers raw payload straight to initial state graph execution
-    API -->|1. graph.ainvoke#40;raw_alert_payload#41;| TP
+    %% Worker triggers graph execution
+    WORKER -->|3. graph.ainvoke#40;raw_alert_payload#41;| TP
 
     %% Observability & Quality Layer
     subgraph OBS [OBSERVABILITY & QUALITY LAYER]
@@ -139,27 +142,14 @@ graph TB
     class HA highlight;
     class INGRESS ingress;
 
-    %% --------------------------------------------------
-    %% EDGE STYLING 
-    %% --------------------------------------------------
-    
-    %% Ingress webhook edges (Green)
+    %% Edge Styling Adjustments
     linkStyle 0,1,2 stroke:#a6e3a1,stroke-width:2px,color:#a6e3a1
-
-    %% Internal Orchestration flow (Blue)
-    linkStyle 3,4,5,6,7,8,9,10 stroke:#89b4fa,stroke-width:2px,color:#89b4fa
-
-    %% DB Checkpoint links (Grey/Subdued)
-    linkStyle 11,12,13,14,15,16 stroke:#6c7086,stroke-width:1px,stroke-dasharray:5
-
-    %% Webhook to Graph execution (Red/Important)
-    linkStyle 17 stroke:#f38ba8,stroke-width:3px,color:#f38ba8
-
-    %% Observability callbacks (Purple)
-    linkStyle 18,19,20,21 stroke:#cba6f7,stroke-width:2px,color:#cba6f7
-
-    %% Tool Execution thick edges (Yellow/Orange)
-    linkStyle 22,23,24 stroke:#f9e2af,stroke-width:3px,color:#f9e2af
+    linkStyle 3,4 stroke:#a6e3a1,stroke-width:2px,color:#a6e3a1
+    linkStyle 5,6,7,8,9,10,11,12 stroke:#89b4fa,stroke-width:2px,color:#89b4fa
+    linkStyle 13,14,15,16,17,18 stroke:#6c7086,stroke-width:1px,stroke-dasharray:5
+    linkStyle 19 stroke:#f38ba8,stroke-width:3px,color:#f38ba8
+    linkStyle 20,21,22,23 stroke:#cba6f7,stroke-width:2px,color:#cba6f7
+    linkStyle 24,25,26 stroke:#f9e2af,stroke-width:3px,color:#f9e2af
 ```
 
 **Agent 1:** Triage Commander (triage_commander) – Structure raw data, handles noisy payload ingestion and configures state routing.
