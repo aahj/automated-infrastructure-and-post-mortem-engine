@@ -4,6 +4,10 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import cast
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+from graph.workflow import build_graph
+from observability.langfuse_setup import get_langfuse_run
 
 # added src/ to python path before any imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -12,15 +16,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
+graph = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.db_pool = AsyncConnectionPool(
+    pool = AsyncConnectionPool(
         conninfo=os.getenv("POSTGRES_CONNECTION_URI"),
         max_size=10,
         open=False,
@@ -29,7 +35,17 @@ async def lifespan(app: FastAPI):
             "row_factory": dict_row,
         },
     )
-    await app.state.db_pool.open()
+    await pool.open()
+    app.state.db_pool = pool
+
+    global graph
+    checkpointer = AsyncPostgresSaver(pool)
+    # Initialize checkpoint tables if they don't exist
+    await checkpointer.setup()
+
+    graph = await build_graph(checkpointer)
+    print("[FASTAPI] Graph compiled and ready.")
+
     yield
     await app.state.db_pool.close()
 
@@ -73,6 +89,18 @@ async def get_all_awaiting_approval_jobs(request: Request):
 
     return {"success": True, "data": {"jobs": jobs}}
 
+
 @app.get("/incident/{incident_id}/review")
-async def get_incident_for_review():
-    pass
+async def get_incident_for_review(incident_id: str):
+    global graph
+    config, trace = get_langfuse_run(session_id=incident_id)
+    # Read state directly from Postgres checkpointer
+    state = await graph.aget_state(config)
+    if not state.tasks or not state.tasks[0].interrupts:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No human pending approval found for this incident.",
+        )
+
+    # extract the payload passed to the interrupt
+    interrupt_payload = state.tasks[0].interrupts[0].value

@@ -30,7 +30,7 @@ log_investigator_client = MultiServerMCPClient(
                 "ELASTICSEARCH_USERNAME": os.getenv("ELASTICSEARCH_USERNAME"),
                 "ELASTICSEARCH_PASSWORD": os.getenv("ELASTICSEARCH_PASSWORD"),
                 "DISABLE_HIGH_RISK_OPERATIONS": "true",
-                "ELASTICSEARCH_VERIFY_CERTS": os.getenv("ELASTICSEARCH_VERIFY_CERTS","false")
+                "ELASTICSEARCH_VERIFY_CERTS": os.getenv("ELASTICSEARCH_VERIFY_CERTS", "false"),
             },
         },
     }
