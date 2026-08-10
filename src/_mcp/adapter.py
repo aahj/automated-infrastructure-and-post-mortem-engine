@@ -20,7 +20,19 @@ log_investigator_client = MultiServerMCPClient(
                 "MYSQL_PASSWORD": os.getenv("MYSQL_PASSWORD"),
                 "MYSQL_DATABASE": os.getenv("MYSQL_DATABASE"),
             },
-        }
+        },
+        "elasticsearch-mcp-server": {
+            "command": "uvx",
+            "args": ["elasticsearch-mcp-server"],
+            "transport": "stdio",
+            "env": {
+                "ELASTICSEARCH_HOSTS": os.getenv("ELASTICSEARCH_HOSTS", "https://localhost:9200"),
+                "ELASTICSEARCH_USERNAME": os.getenv("ELASTICSEARCH_USERNAME"),
+                "ELASTICSEARCH_PASSWORD": os.getenv("ELASTICSEARCH_PASSWORD"),
+                "DISABLE_HIGH_RISK_OPERATIONS": "true",
+                "ELASTICSEARCH_VERIFY_CERTS": os.getenv("ELASTICSEARCH_VERIFY_CERTS","false")
+            },
+        },
     }
 )
 
