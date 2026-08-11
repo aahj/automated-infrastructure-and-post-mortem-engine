@@ -4,7 +4,10 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import cast
+from uuid import UUID
+
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from pydantic import BaseModel
 
 from graph.workflow import build_graph
 from observability.langfuse_setup import get_langfuse_run
@@ -16,12 +19,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Request, status, HTTPException
+from fastapi import FastAPI, HTTPException, Request, status
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 graph = None
+
+
+class ApproveIncidentRequest(BaseModel):
+    incident_id: UUID
+    approve: bool
 
 
 @asynccontextmanager
@@ -93,7 +101,7 @@ async def get_all_awaiting_approval_jobs(request: Request):
 @app.get("/incident/{incident_id}/review")
 async def get_incident_for_review(incident_id: str):
     global graph
-    config, trace = get_langfuse_run(session_id=incident_id)
+    config, _ = get_langfuse_run(session_id=incident_id)
     # Read state directly from Postgres checkpointer
     state = await graph.aget_state(config)
     if not state.tasks or not state.tasks[0].interrupts:
@@ -104,3 +112,40 @@ async def get_incident_for_review(incident_id: str):
 
     # extract the payload passed to the interrupt
     interrupt_payload = state.tasks[0].interrupts[0].value
+    return {"success": True, "data": {"status": "awaiting_approval", "payload": interrupt_payload}}
+
+
+@app.post("/incident/approve")
+async def approve_incident(body: ApproveIncidentRequest):
+    db_pool = cast(AsyncConnectionPool, app.state.db_pool)
+    async with db_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT * FROM incident_ingress_queue WHERE incident_id = %s AND status = %s",
+                (
+                    body.incident_id,
+                    "awaiting_approval",
+                ),
+            )
+            incident = await cur.fetchone()
+            if not incident:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found"
+                )
+
+            await cur.execute(
+                "UPDATE incident_ingress_queue SET status = %s WHERE incident_id = %s",
+                (
+                    "auto_mitigation_approved" if body.approve else "manual_mitigation_required",
+                    body.incident_id,
+                ),
+            )
+            affected_rows = await cur.rowcount
+
+    if affected_rows == 0:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update incident status",
+        )
+
+    return {"success": True}
