@@ -21,3 +21,13 @@ class Agents(Enum):
 MAX_TOOL_ITERATION = 9
 CONNECTION_ESTABLISH_COOL_DOWN_PERIOD_SEC = 5
 MAX_CONCURRENT_JOBS = 3
+
+
+class JobStatus(Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    AWAITING_APPROVAL = "awaiting_approval"
+    AUTO_MITIGATION_APPROVED = "auto_mitigation_approved"
+    MANUAL_MITIGATION_REQUIRED = "manual_mitigation_required"

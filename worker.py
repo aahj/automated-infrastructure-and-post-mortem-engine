@@ -9,7 +9,11 @@ from typing import cast
 
 from dotenv import load_dotenv
 
-from constants import CONNECTION_ESTABLISH_COOL_DOWN_PERIOD_SEC, MAX_CONCURRENT_JOBS
+from constants import (
+    CONNECTION_ESTABLISH_COOL_DOWN_PERIOD_SEC,
+    MAX_CONCURRENT_JOBS,
+    JobStatus,
+)
 
 load_dotenv()
 
@@ -18,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.types import Command
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
@@ -48,6 +53,7 @@ semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)  # limit concurrent jobs
 async def process_job(job, pool: AsyncConnectionPool, graph):
     async with semaphore:
         job_id = job["id"]
+        job_status = job["status"]
         session_id = job["session_id"]
         raw_alert_payload = job["payload"]
         fallback_incident_timestamp = (
@@ -64,7 +70,18 @@ async def process_job(job, pool: AsyncConnectionPool, graph):
 
             with trace:
                 # Invoking graph
-                graph_res = await graph.ainvoke(state, config=config)
+                match job_status:
+                    case JobStatus.PENDING.value:
+                        graph_input = state
+                    case JobStatus.AUTO_MITIGATION_APPROVED.value:
+                        graph_input = Command(resume="approve")
+                    case JobStatus.MANUAL_MITIGATION_REQUIRED.value:
+                        graph_input = Command(resume="reject")
+                    case _:
+                        raise ValueError(f"Unsupported job status: {job_status}")
+
+                graph_res = await graph.ainvoke(graph_input, config=config)
+
                 if "__interrupt__" in graph_res:
                     print(
                         f"[WORKER] Job: {job_id}, session_id: {session_id} hit interrupt gate. Saving state and releasing worker."
@@ -73,7 +90,7 @@ async def process_job(job, pool: AsyncConnectionPool, graph):
                         await con.execute(
                             "UPDATE incident_ingress_queue SET status = %s WHERE id = %s",
                             (
-                                "awaiting_approval",
+                                JobStatus.AWAITING_APPROVAL.value,
                                 job_id,
                             ),
                         )
@@ -102,9 +119,12 @@ async def process_job(job, pool: AsyncConnectionPool, graph):
             async with pool.connection() as con:
                 await con.execute(
                     """
-                    UPDATE incident_ingress_queue SET status= 'completed' WHERE id = %s
+                    UPDATE incident_ingress_queue SET status= %s WHERE id = %s
                     """,
-                    (job_id,),
+                    (
+                        JobStatus.COMPLETED.value,
+                        job_id,
+                    ),
                 )
             print(
                 "[WORKER] "
@@ -120,10 +140,10 @@ async def process_job(job, pool: AsyncConnectionPool, graph):
             async with pool.connection() as con:
                 await con.execute(
                     """
-                    UPDATE incident_ingress_queue SET status= 'failed', retry_count = retry_count + 1
+                    UPDATE incident_ingress_queue SET status= %s, retry_count = retry_count + 1
                     WHERE id = %s
                     """,
-                    (job_id,),
+                    (JobStatus.FAILED.value, job_id),
                 )
 
 
@@ -156,16 +176,34 @@ async def run_worker():
                     job = None
                     async with pool.connection() as con:
                         async with con.cursor() as cur:
-                            await cur.execute("""
-                                UPDATE incident_ingress_queue SET status= 'processing', locked_at = NOW()
+                            await cur.execute(
+                                """
+                                UPDATE incident_ingress_queue SET status= %s, locked_at = NOW()
                                 WHERE id = (
-                                    SELECT id FROM incident_ingress_queue WHERE status = 'pending'
-                                    ORDER BY created_at ASC
+                                    SELECT id FROM incident_ingress_queue WHERE status in (%s, %s, %s)
+                                    ORDER BY 
+                                        CASE status
+                                            WHEN %s THEN 1
+                                            WHEN %s THEN 2
+                                            WHEN %s THEN 3
+                                        END,
+                                    created_at ASC
                                     LIMIT 1
                                     FOR UPDATE SKIP LOCKED
                                 )
                                 RETURNING id, session_id, payload, created_at
-                                """)
+                                """,
+                                (
+                                    JobStatus.PROCESSING.value,
+                                    JobStatus.PENDING.value,
+                                    JobStatus.AUTO_MITIGATION_APPROVED.value,
+                                    JobStatus.MANUAL_MITIGATION_REQUIRED.value,
+                                    # priority order
+                                    JobStatus.PENDING.value,
+                                    JobStatus.AUTO_MITIGATION_APPROVED.value,
+                                    JobStatus.MANUAL_MITIGATION_REQUIRED.value,
+                                ),
+                            )
                             job = await cur.fetchone()
 
                     if job:

@@ -9,6 +9,7 @@ from uuid import UUID
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from pydantic import BaseModel
 
+from constants import JobStatus
 from graph.workflow import build_graph
 from observability.langfuse_setup import get_langfuse_run
 
@@ -74,12 +75,9 @@ async def receive_alerts(request: Request):
             await cur.execute(
                 """
                 INSERT INTO incident_ingress_queue (session_id, payload, status)
-                VALUES (%s, %s, 'pending')
+                VALUES (%s, %s, %s)
                 """,
-                (
-                    session_id,
-                    Jsonb(raw_alert_payload),
-                ),
+                (session_id, Jsonb(raw_alert_payload), JobStatus.PENDING.value),
             )
 
     return {"success": True, "session_id": session_id}
@@ -91,7 +89,8 @@ async def get_all_awaiting_approval_jobs(request: Request):
     async with db_pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT * FROM incident_ingress_queue WHERE status = %s", ("awaiting_approval",)
+                "SELECT * FROM incident_ingress_queue WHERE status = %s",
+                (JobStatus.AWAITING_APPROVAL.value,),
             )
             jobs = await cur.fetchall()
 
@@ -124,7 +123,7 @@ async def approve_incident(body: ApproveIncidentRequest):
                 "SELECT * FROM incident_ingress_queue WHERE incident_id = %s AND status = %s",
                 (
                     body.incident_id,
-                    "awaiting_approval",
+                    JobStatus.AWAITING_APPROVAL.value,
                 ),
             )
             incident = await cur.fetchone()
@@ -136,7 +135,11 @@ async def approve_incident(body: ApproveIncidentRequest):
             await cur.execute(
                 "UPDATE incident_ingress_queue SET status = %s WHERE incident_id = %s",
                 (
-                    "auto_mitigation_approved" if body.approve else "manual_mitigation_required",
+                    (
+                        JobStatus.AUTO_MITIGATION_APPROVED.value
+                        if body.approve
+                        else JobStatus.MANUAL_MITIGATION_REQUIRED.value
+                    ),
                     body.incident_id,
                 ),
             )
