@@ -15,6 +15,7 @@ class NodeName(Enum):
 
 class Agents(Enum):
     LOG_INVESTIGATOR = "log_investigator"
+    MITIGATION_EXECUTOR = "mitigation_executor"
     MITIGATION_ENGINEER = "mitigation_engineer"
 
 
