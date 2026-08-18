@@ -1,5 +1,6 @@
 import os
 from langchain_core.tools import BaseTool
+from langchain_ollama import ChatOllama
 
 from _mcp.adapter import get_tools
 from constants import Agents
@@ -56,3 +57,34 @@ async def get_mitigation_executor_tools() -> list[BaseTool]:
     if not tools:
         raise ValueError("NO TOOL FOUND")
     return tools
+
+async def build_llm() -> ChatOllama:
+    tools = await get_mitigation_executor_tools()
+
+    return ChatOllama(
+        base_url=OLLAMA_BASE_URL,
+        model=MODEL_NAME,
+        temperature=0.1,  # 0.1 for deterministic tool selection and execution
+    ).bind_tools(tools)
+
+async def mitigation_executor_node(state: dict) -> dict:
+    """
+    LangGraph Node: Mitigation Executor
+    Reads: state["service_name"], state["severity_level"], state["incident_occurred_at"], state["error_summary"], state["raw_alert_payload"], state["messages"], state["root_cause"], state["diagnostics"]
+    Writes: state["internal_error"], state["current_status"]
+    """
+    service_name = state["service_name"]
+    severity_level = state["severity_level"]
+    incident_occurred_at = state["incident_occurred_at"]
+    error_summary = state["error_summary"]
+    raw_alert_payload = state["raw_alert_payload"]
+    existing_messages = state.get("messages", [])
+    root_cause = state["root_cause"]
+    diagnostics = state["diagnostics"]
+
+    required_fields = [service_name, severity_level, incident_occurred_at, error_summary, raw_alert_payload, root_cause, diagnostics]
+    missing_fields = [f for f in required_fields if not f]
+    if missing_fields:
+        return {
+            "internal_error": f"Missing required fields: {missing_fields}"
+        }
