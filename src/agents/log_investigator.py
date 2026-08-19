@@ -134,31 +134,24 @@ async def log_investigator_node(state: dict) -> dict:
 
     print("[LOG INVESTIGATOR] " f"Calling Model: {MODEL_NAME}")
 
+    setup_messages = []
     if is_first_iteration:
-        # It's the first run: We need to append the command to the input
         initial_command = HumanMessage(content=HUMAN_PROMPT)
-        input_to_llm = filtered_history + [system_prompt] + [initial_command]
-
-        try:
-            result = await llm.ainvoke(input_to_llm)
-        except Exception as e:
-            print(f"[LOG INVESTIGATOR] LLM invoke error: {str(e)}")
-            return {"internal_error": str(e)}
-
-        return {
-            "messages": [system_prompt, initial_command, result],
-            "internal_error": None,
-            "current_status": "investigating",
-        }
-
+        setup_messages = [system_prompt, initial_command]
     else:
         # It's a tool loop: The initial command and tool results are already in the filtered_history
-        input_to_llm = filtered_history
+        pass
 
-        try:
-            result = await llm.ainvoke(input_to_llm)
-        except Exception as e:
-            print(f"[LOG INVESTIGATOR] LLM invoke error: {str(e)}")
-            return {"internal_error": str(e)}
+    input_to_llm = filtered_history + setup_messages
 
-        return {"messages": [result], "internal_error": None, "current_status": "investigating"}
+    try:
+        result = await llm.ainvoke(input_to_llm)
+    except Exception as e:
+        print(f"[LOG INVESTIGATOR] LLM invoke error: {e}")
+        return {"internal_error": str(e)}
+
+    return {
+        "messages": setup_messages + [result],
+        "internal_error": None,
+        "current_status": "investigating",
+    }

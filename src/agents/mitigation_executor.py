@@ -1,12 +1,14 @@
 import os
+
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
 
 from _mcp.adapter import get_tools
 from constants import Agents
 
-MODEL_NAME = os.getenv("OLLAMA_MODEL","qwen2.5:7b")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL","http://localhost:11434")
+MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 EXECUTOR_PROMPT = """
 You are the **Mitigation Executor Agent**, a specialized automated site reliability engineer responsible for executing pre-approved recovery commands during live system incidents.
@@ -21,7 +23,6 @@ Your sole objective is to safely translate approved remediation strategies into 
 - **Service Name:** {service_name}
 - **Severity Level:** {severity_level}
 - **Occurred At (UTC):** {incident_occurred_at}
-- **Current Status:** {current_status}
 
 ### DIAGNOSTIC SYNTHESIS
 - **Error Summary:** {error_summary}
@@ -47,16 +48,16 @@ After executing all required tool calls, provide your final response structured 
 - **Handoff Note:** "Mitigation steps applied. Handing off to Health Verifier for post-action verification loop."
 """
 HUMAN_PROMPT = """
-### INPUT MESSAGES & APPROVED PLAN
-Review the conversation history and human approval payload below to identify the exact approved mitigation steps:
-{messages}
+Review the conversation history and human approval payload below to identify the exact approved mitigation steps.
 """
+
 
 async def get_mitigation_executor_tools() -> list[BaseTool]:
     tools = await get_tools(agent=Agents.MITIGATION_EXECUTOR)
     if not tools:
         raise ValueError("NO TOOL FOUND")
     return tools
+
 
 async def build_llm() -> ChatOllama:
     tools = await get_mitigation_executor_tools()
@@ -66,6 +67,7 @@ async def build_llm() -> ChatOllama:
         model=MODEL_NAME,
         temperature=0.1,  # 0.1 for deterministic tool selection and execution
     ).bind_tools(tools)
+
 
 async def mitigation_executor_node(state: dict) -> dict:
     """
@@ -82,9 +84,60 @@ async def mitigation_executor_node(state: dict) -> dict:
     root_cause = state["root_cause"]
     diagnostics = state["diagnostics"]
 
-    required_fields = [service_name, severity_level, incident_occurred_at, error_summary, raw_alert_payload, root_cause, diagnostics]
+    required_fields = [
+        service_name,
+        severity_level,
+        incident_occurred_at,
+        error_summary,
+        raw_alert_payload,
+        root_cause,
+        diagnostics,
+    ]
     missing_fields = [f for f in required_fields if not f]
     if missing_fields:
-        return {
-            "internal_error": f"Missing required fields: {missing_fields}"
-        }
+        return {"internal_error": f"Missing required fields: {missing_fields}"}
+
+    print("[MITIGATION EXECUTOR] " "Mitigating the issue....")
+
+    try:
+        llm = await build_llm()
+    except ValueError:
+        print("[MITIGATION EXECUTOR] " "NO TOOL FOUND, EXITING NOW....")
+        return {"internal_error": "NO TOOL FOUND. EXITING NOW...."}
+    system_prompt = SystemMessage(
+        content=EXECUTOR_PROMPT.format(
+            service_name=service_name,
+            severity_level=severity_level,
+            incident_occurred_at=incident_occurred_at,
+            error_summary=error_summary,
+            raw_alert_payload=str(raw_alert_payload),
+            root_cause=root_cause,
+            diagnostics=str(diagnostics),
+        )
+    )
+    filtered_history = [msg for msg in existing_messages if msg.type != "system"]
+
+    # Check if this is the first time the node is running
+    is_first_iteration = not any(
+        isinstance(msg, HumanMessage) and msg.content == HUMAN_PROMPT
+        for msg in reversed(existing_messages)
+    )
+    print("[MITIGATION EXECUTOR] " f"Calling Model: {MODEL_NAME}")
+
+    new_messages = []
+    if is_first_iteration:
+        new_messages = [system_prompt, HumanMessage(content=HUMAN_PROMPT)]
+
+    input_to_llm = filtered_history + new_messages
+
+    try:
+        response = await llm.ainvoke(input_to_llm)
+    except Exception as e:
+        print(f"[MITIGATION EXECUTOR] LLM invoke error: {e}")
+        return {"internal_error": str(e)}
+
+    return {
+        "current_status": "mitigating",
+        "internal_error": None,
+        "messages": new_messages + [response],
+    }
