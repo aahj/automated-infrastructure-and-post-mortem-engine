@@ -9,12 +9,12 @@ from uuid import UUID
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from pydantic import BaseModel
 
+# added src/ to python path before any imports
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
 from constants import JobStatus
 from graph.workflow import build_graph
 from observability.langfuse_setup import get_langfuse_run
-
-# added src/ to python path before any imports
-sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from dotenv import load_dotenv
 

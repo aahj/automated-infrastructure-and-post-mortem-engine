@@ -9,18 +9,16 @@ from typing import cast
 
 from dotenv import load_dotenv
 
-from constants import (
-    CONNECTION_ESTABLISH_COOL_DOWN_PERIOD_SEC,
-    MAX_CONCURRENT_JOBS,
-    JobStatus,
-)
-
 load_dotenv()
 
 # added src/ to python path before any imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-
+from constants import (
+    CONNECTION_ESTABLISH_COOL_DOWN_PERIOD_SEC,
+    MAX_CONCURRENT_JOBS,
+    JobStatus,
+)
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 from psycopg.rows import dict_row
@@ -191,7 +189,7 @@ async def run_worker():
                                     LIMIT 1
                                     FOR UPDATE SKIP LOCKED
                                 )
-                                RETURNING id, session_id, payload, created_at
+                                RETURNING id, status, session_id, payload, created_at
                                 """,
                                 (
                                     JobStatus.PROCESSING.value,
