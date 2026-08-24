@@ -29,7 +29,7 @@ graph = None
 
 
 class ApproveIncidentRequest(BaseModel):
-    incident_id: UUID
+    incident_id: str
     approve: bool
 
 
@@ -120,7 +120,7 @@ async def approve_incident(body: ApproveIncidentRequest):
     async with db_pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT * FROM incident_ingress_queue WHERE incident_id = %s AND status = %s",
+                "SELECT * FROM incident_ingress_queue WHERE session_id = %s AND status = %s",
                 (
                     body.incident_id,
                     JobStatus.AWAITING_APPROVAL.value,
@@ -133,7 +133,7 @@ async def approve_incident(body: ApproveIncidentRequest):
                 )
 
             await cur.execute(
-                "UPDATE incident_ingress_queue SET status = %s WHERE incident_id = %s",
+                "UPDATE incident_ingress_queue SET status = %s WHERE session_id = %s",
                 (
                     (
                         JobStatus.AUTO_MITIGATION_APPROVED.value
@@ -143,7 +143,7 @@ async def approve_incident(body: ApproveIncidentRequest):
                     body.incident_id,
                 ),
             )
-            affected_rows = await cur.rowcount
+            affected_rows = cur.rowcount
 
     if affected_rows == 0:
         raise HTTPException(

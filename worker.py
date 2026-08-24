@@ -69,7 +69,7 @@ async def process_job(job, pool: AsyncConnectionPool, graph):
             with trace:
                 # Invoking graph
                 match job_status:
-                    case JobStatus.PENDING.value:
+                    case JobStatus.PROCESSING.value:
                         graph_input = state
                     case JobStatus.AUTO_MITIGATION_APPROVED.value:
                         graph_input = Command(resume="approve")
