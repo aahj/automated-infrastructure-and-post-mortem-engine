@@ -47,27 +47,26 @@ def human_approval_node(state: dict) -> dict:
     else:
         print(f"\n[Human Approval] Rejected and leaving for manual investigation...\n")
 
-        # LangGraph 1.1.0: after Command(resume=...), the next node receives only
-        # the keys returned by this node. Not the full pre-interrupt checkpoint.
-        # Returning the complete state explicitly ensures downstream agents
-        # receive complete state.
+    # LangGraph 1.1.0: after Command(resume=...), the next node receives only
+    # the keys returned by this node. Not the full pre-interrupt checkpoint.
+    # Returning the complete state explicitly ensures downstream agents
+    # receive complete state.
 
-        return {
-            "messages": state.get("messages", []),
-            "session_id": state["session_id"],
-            "incident_id": incident_id,
-            "service_name": service_name,
-            "severity_level": severity_level,
-            "incident_occurred_at": incident_occurred_at,
-            "raw_alert_payload": state["raw_alert_payload"],
-            "error_summary": error_summary,
-            "current_status": state["current_status"],
-            "root_cause": root_cause,
-            "diagnostics": diagnostics,
-            "is_resolved": state["is_resolved"],
-            "mitigation_plan": state["mitigation_plan"],
-            "final_report": state["final_report"],
-            "internal_error": None,
-            "approved": approved,
-            "tool_iterations": state["tool_iterations"],
-        }
+    return {
+        "session_id": state["session_id"],
+        "incident_id": incident_id,
+        "service_name": service_name,
+        "severity_level": severity_level,
+        "incident_occurred_at": incident_occurred_at,
+        "raw_alert_payload": state["raw_alert_payload"],
+        "error_summary": error_summary,
+        "current_status": state["current_status"],
+        "root_cause": root_cause,
+        "diagnostics": diagnostics,
+        "is_resolved": state["is_resolved"],
+        "mitigation_plan": state["mitigation_plan"],
+        "final_report": state["final_report"],
+        "internal_error": None,
+        "approved": approved,
+        "tool_iterations": state["tool_iterations"],
+    }
