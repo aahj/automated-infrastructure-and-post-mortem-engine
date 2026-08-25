@@ -51,7 +51,10 @@ semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)  # limit concurrent jobs
 async def process_job(job, pool: AsyncConnectionPool, graph):
     async with semaphore:
         job_id = job["id"]
-        job_status = job["status"]
+        # The queue row is changed to `processing` when it is claimed. Use the
+        # status captured before that update to decide whether this is a new
+        # graph invocation or a resume from the human-approval interrupt.
+        claimed_from_status = job["claimed_from_status"]
         session_id = job["session_id"]
         raw_alert_payload = job["payload"]
         fallback_incident_timestamp = (
@@ -68,15 +71,15 @@ async def process_job(job, pool: AsyncConnectionPool, graph):
 
             with trace:
                 # Invoking graph
-                match job_status:
-                    case JobStatus.PROCESSING.value:
+                match claimed_from_status:
+                    case JobStatus.PENDING.value:
                         graph_input = state
                     case JobStatus.AUTO_MITIGATION_APPROVED.value:
                         graph_input = Command(resume="approve")
                     case JobStatus.MANUAL_MITIGATION_REQUIRED.value:
                         graph_input = Command(resume="reject")
                     case _:
-                        raise ValueError(f"Unsupported job status: {job_status}")
+                        raise ValueError(f"Unsupported claimed job status: {claimed_from_status}")
 
                 graph_res = await graph.ainvoke(graph_input, config=config)
 
@@ -176,9 +179,10 @@ async def run_worker():
                         async with con.cursor() as cur:
                             await cur.execute(
                                 """
-                                UPDATE incident_ingress_queue SET status= %s, locked_at = NOW()
-                                WHERE id = (
-                                    SELECT id FROM incident_ingress_queue WHERE status in (%s, %s, %s)
+                                WITH next_job AS (
+                                    SELECT id, status AS claimed_from_status
+                                    FROM incident_ingress_queue
+                                    WHERE status IN (%s, %s, %s)
                                     ORDER BY 
                                         CASE status
                                             WHEN %s THEN 1
@@ -189,10 +193,19 @@ async def run_worker():
                                     LIMIT 1
                                     FOR UPDATE SKIP LOCKED
                                 )
-                                RETURNING id, status, session_id, payload, created_at
+                                UPDATE incident_ingress_queue AS queue
+                                SET status = %s, locked_at = NOW()
+                                FROM next_job
+                                WHERE queue.id = next_job.id
+                                RETURNING
+                                    queue.id,
+                                    queue.status,
+                                    next_job.claimed_from_status,
+                                    queue.session_id,
+                                    queue.payload,
+                                    queue.created_at
                                 """,
                                 (
-                                    JobStatus.PROCESSING.value,
                                     JobStatus.PENDING.value,
                                     JobStatus.AUTO_MITIGATION_APPROVED.value,
                                     JobStatus.MANUAL_MITIGATION_REQUIRED.value,
@@ -200,6 +213,7 @@ async def run_worker():
                                     JobStatus.PENDING.value,
                                     JobStatus.AUTO_MITIGATION_APPROVED.value,
                                     JobStatus.MANUAL_MITIGATION_REQUIRED.value,
+                                    JobStatus.PROCESSING.value,
                                 ),
                             )
                             job = await cur.fetchone()
