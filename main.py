@@ -117,11 +117,23 @@ async def get_incident_for_review(incident_id: str):
 @app.post("/incident/approve")
 async def approve_incident(body: ApproveIncidentRequest):
     db_pool = cast(AsyncConnectionPool, app.state.db_pool)
+    decision_status = (
+        JobStatus.AUTO_MITIGATION_APPROVED.value
+        if body.approve
+        else JobStatus.MANUAL_MITIGATION_REQUIRED.value
+    )
+
     async with db_pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT * FROM incident_ingress_queue WHERE session_id = %s AND status = %s",
+                """
+                UPDATE incident_ingress_queue
+                SET status = %s
+                WHERE session_id = %s AND status = %s
+                RETURNING id
+                """,
                 (
+                    decision_status,
                     body.incident_id,
                     JobStatus.AWAITING_APPROVAL.value,
                 ),
@@ -129,26 +141,8 @@ async def approve_incident(body: ApproveIncidentRequest):
             incident = await cur.fetchone()
             if not incident:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found"
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Incident not found or is not awaiting approval",
                 )
-
-            await cur.execute(
-                "UPDATE incident_ingress_queue SET status = %s WHERE session_id = %s",
-                (
-                    (
-                        JobStatus.AUTO_MITIGATION_APPROVED.value
-                        if body.approve
-                        else JobStatus.MANUAL_MITIGATION_REQUIRED.value
-                    ),
-                    body.incident_id,
-                ),
-            )
-            affected_rows = cur.rowcount
-
-    if affected_rows == 0:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update incident status",
-        )
 
     return {"success": True}
