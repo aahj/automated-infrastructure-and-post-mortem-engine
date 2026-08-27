@@ -65,6 +65,7 @@ def human_approval_node(state: dict) -> dict:
         "diagnostics": diagnostics,
         "is_resolved": state["is_resolved"],
         "mitigation_plan": state["mitigation_plan"],
+        "verification_result": state.get("verification_result", {}),
         "final_report": state["final_report"],
         "internal_error": None,
         "approved": approved,

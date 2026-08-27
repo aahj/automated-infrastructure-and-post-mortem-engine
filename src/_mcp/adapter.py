@@ -77,5 +77,9 @@ async def get_tools(agent: Agents):
             return await log_investigator_client.get_tools()
         case Agents.MITIGATION_EXECUTOR:
             return await mitigation_executor_client.get_tools()
+        case Agents.MITIGATION_ENGINEER:
+            # Verification is read-only. Reuse the investigator client so high-risk
+            # Elasticsearch operations remain disabled and no mutation tools are exposed.
+            return await log_investigator_client.get_tools()
         case _:
             return None

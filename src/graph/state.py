@@ -30,6 +30,7 @@ class AgentState(TypedDict):
     diagnostics: dict  # {"app_logs":[...], "db_logs":[...]}  - given by Evidence Synthesizer Node
     is_resolved: bool
     mitigation_plan: list[dict]
+    verification_result: dict
     final_report: str  # in markdown format
     internal_error: str | None
     approved: bool  # human approval
@@ -52,6 +53,7 @@ def initial_state(raw_alert_payload: dict, session_id: str, incident_occurred_at
         "diagnostics": {},
         "is_resolved": False,
         "mitigation_plan": [],
+        "verification_result": {},
         "final_report": "",
         "internal_error": None,
         "approved": False,

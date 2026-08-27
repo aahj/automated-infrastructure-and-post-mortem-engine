@@ -5,11 +5,13 @@ class NodeName(Enum):
     TRIAGE_COMMANDER = "triage_commander"
     LOG_INVESTIGATOR = "log_investigator"
     EVIDENCE_SYNTHESIZER = "evidence_synthesizer"
+    MITIGATION_EXECUTOR = "mitigation_executor"
     MITIGATION_ENGINEER = "mitigation_engineer"
     POST_MORTEM = "post_mortem_scribe"
     HUMAN_APPROVAL = "human_approval"
     # tools node
     LOG_INVESTIGATOR_TOOL = "log_investigator_tool"
+    MITIGATION_EXECUTOR_TOOL = "mitigation_executor_tool"
     INCREMENT_TOOL_COUNTER = "increment_tool_counter"
 
 
