@@ -1,6 +1,6 @@
 import os
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
 
@@ -75,6 +75,7 @@ async def mitigation_executor_node(state: dict) -> dict:
     Reads: state["service_name"], state["severity_level"], state["incident_occurred_at"], state["error_summary"], state["raw_alert_payload"], state["messages"], state["root_cause"], state["diagnostics"]
     Writes: state["internal_error"], state["current_status"]
     """
+    incident_id = state["incident_id"]
     service_name = state["service_name"]
     severity_level = state["severity_level"]
     incident_occurred_at = state["incident_occurred_at"]
@@ -106,6 +107,7 @@ async def mitigation_executor_node(state: dict) -> dict:
         return {"internal_error": "NO TOOL FOUND. EXITING NOW...."}
     system_prompt = SystemMessage(
         content=EXECUTOR_PROMPT.format(
+            incident_id=incident_id,
             service_name=service_name,
             severity_level=severity_level,
             incident_occurred_at=incident_occurred_at,
@@ -117,18 +119,20 @@ async def mitigation_executor_node(state: dict) -> dict:
     )
     filtered_history = [msg for msg in existing_messages if msg.type != "system"]
 
-    # Check if this is the first time the node is running
-    is_first_iteration = not any(
-        isinstance(msg, HumanMessage) and msg.content == HUMAN_PROMPT
-        for msg in reversed(existing_messages)
-    )
+    # A ToolMessage means the executor is continuing its current ReAct loop. Any
+    # other last message starts a fresh mitigation pass after human approval.
+    is_first_iteration = not existing_messages or not isinstance(existing_messages[-1], ToolMessage)
     print("[MITIGATION EXECUTOR] " f"Calling Model: {MODEL_NAME}")
 
     new_messages = []
     if is_first_iteration:
         new_messages = [system_prompt, HumanMessage(content=HUMAN_PROMPT)]
 
-    input_to_llm = filtered_history + new_messages
+    # Reassert executor guardrails on every tool-loop turn without appending a
+    # duplicate SystemMessage to shared state.
+    input_to_llm = [system_prompt] + filtered_history
+    if is_first_iteration:
+        input_to_llm.append(HumanMessage(content=HUMAN_PROMPT))
 
     try:
         response = await llm.ainvoke(input_to_llm)
