@@ -14,16 +14,16 @@ load_dotenv()
 # added src/ to python path before any imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from constants import (
-    CONNECTION_ESTABLISH_COOL_DOWN_PERIOD_SEC,
-    MAX_CONCURRENT_JOBS,
-    JobStatus,
-)
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+from constants import (
+    CONNECTION_ESTABLISH_COOL_DOWN_PERIOD_SEC,
+    MAX_CONCURRENT_JOBS,
+    JobStatus,
+)
 from graph.state import initial_state
 from graph.workflow import build_graph
 from observability.langfuse_setup import flush_langfuse, get_langfuse_run

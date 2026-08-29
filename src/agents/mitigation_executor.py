@@ -136,7 +136,10 @@ async def mitigation_executor_node(state: dict) -> dict:
                     content = _tool_error_result(f"No tool is available: {tool_call['name']}")
                 else:
                     try:
-                        print("[MITIGATION EXECUTOR] " f"Calling tool: {tool_call['name']} with args: {args}")
+                        print(
+                            "[MITIGATION EXECUTOR] "
+                            f"Calling tool: {tool_call['name']} with args: {args}"
+                        )
                         result = await tool.ainvoke(args)
                         content = (
                             result if isinstance(result, str) else json.dumps(result, default=str)

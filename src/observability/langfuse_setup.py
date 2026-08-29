@@ -35,8 +35,9 @@ def get_langfuse_run(
         return config, nullcontext()
 
     try:
-        from langfuse import get_client, propagate_attributes
         from langfuse.langchain import CallbackHandler
+
+        from langfuse import get_client, propagate_attributes
 
         global langfuse_client
 

@@ -97,15 +97,11 @@ class MitigationEngineerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["is_resolved"])
         self.assertEqual(result["current_status"], "resolved")
-        self.assertEqual(
-            result["verification_result"]["checks_performed"], ["HTTP health check"]
-        )
+        self.assertEqual(result["verification_result"]["checks_performed"], ["HTTP health check"])
 
     def test_mutating_verification_calls_are_rejected(self):
         self.assertFalse(is_read_only_tool_call("kill_blocking_query", {"id": 42}))
-        self.assertFalse(
-            is_read_only_tool_call("query_database", {"sql": "DELETE FROM incidents"})
-        )
+        self.assertFalse(is_read_only_tool_call("query_database", {"sql": "DELETE FROM incidents"}))
         self.assertTrue(is_read_only_tool_call("query_database", {"sql": "SHOW PROCESSLIST"}))
 
 

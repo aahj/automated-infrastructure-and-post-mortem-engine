@@ -9,11 +9,11 @@ from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
 from _mcp.adapter import get_tools
-from constants import Agents
+from constants import MAX_ENGINEER_TOOL_ROUNDS, Agents
 
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-MAX_VERIFICATION_TOOL_ROUNDS = 4
+MAX_VERIFICATION_TOOL_ROUNDS = MAX_ENGINEER_TOOL_ROUNDS
 MUTATING_OPERATION_PATTERN = re.compile(
     r"\b(delete|drop|insert|kill|post|put|patch|reload|restart|terminate|truncate|update|write)\b",
     re.IGNORECASE,
@@ -31,7 +31,7 @@ class VerificationResult(BaseModel):
 
 
 VERIFICATION_PROMPT = """
-You are the Mitigation Engineer. The Mitigation Executor has already applied the approved
+You are the Mitigation Engineer. The MITIGATION ENGINEER has already applied the approved
 changes. Your only job is to verify recovery; never execute a mutation or assume that a
 successful command means the incident is resolved.
 
@@ -92,6 +92,7 @@ def is_read_only_tool_call(tool_name: str, arguments: dict) -> bool:
 
 async def mitigation_engineer_node(state: dict) -> dict:
     """Run read-only post-action probes, then make a structured resolution decision."""
+    print("[MITIGATION ENGINEER] " "Mitigating the issue....")
 
     tools = await get_mitigation_engineer_tools()
     if not tools:
@@ -118,6 +119,7 @@ async def mitigation_engineer_node(state: dict) -> dict:
     ).bind_tools(tools)
     generated_messages = list(setup_messages)
     completed_checks = 0
+    print("[MITIGATION ENGINEER] " f"Calling Model: {MODEL_NAME}")
 
     try:
         for _ in range(MAX_VERIFICATION_TOOL_ROUNDS):
@@ -137,18 +139,24 @@ async def mitigation_engineer_node(state: dict) -> dict:
                     content = f"Verification tool is not available: {tool_call['name']}"
                 else:
                     try:
+                        print(
+                            "[MITIGATION ENGINEER] "
+                            f"Calling tool: {tool_call['name']} with args: {arguments}"
+                        )
                         result = await tool.ainvoke(arguments)
                         content = (
                             result if isinstance(result, str) else json.dumps(result, default=str)
                         )
                         completed_checks += 1
                     except Exception as exc:
+                        print(f"[MITIGATION ENGINEER] Tool calling failed: {exc}")
                         content = f"Verification tool failed: {type(exc).__name__}: {exc}"
 
                 tool_message = ToolMessage(content=content, tool_call_id=tool_call["id"])
                 conversation.append(tool_message)
                 generated_messages.append(tool_message)
     except Exception as exc:
+        print(f"[MITIGATION ENGINEER] LLM invoke error: {exc}")
         result = _tool_error_result(f"Post-action verification failed: {exc}")
         result["messages"] = generated_messages
         return result
@@ -163,6 +171,7 @@ async def mitigation_engineer_node(state: dict) -> dict:
         model=MODEL_NAME,
         temperature=0,
     ).with_structured_output(VerificationResult)
+    print(f"[MITIGATION ENGINEER] Calling Decision Model: {MODEL_NAME}")
 
     try:
         decision = await decision_llm.ainvoke(
@@ -171,6 +180,7 @@ async def mitigation_engineer_node(state: dict) -> dict:
         if not isinstance(decision, VerificationResult):
             decision = VerificationResult.model_validate(decision)
     except Exception as exc:
+        print(f"[MITIGATION ENGINEER] Decision evaluation failed: {exc}")
         result = _tool_error_result(f"Could not evaluate verification evidence: {exc}")
         result["messages"] = generated_messages
         return result

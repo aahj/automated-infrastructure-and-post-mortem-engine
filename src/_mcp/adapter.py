@@ -39,8 +39,10 @@ log_investigator_client = MultiServerMCPClient(
 mitigation_executor_client = MultiServerMCPClient(
     {
         "mysql": {
-            "command": "uvx",
-            "args": ["mdev-mysql-mcp-server"],
+            # "command": "uvx",
+            # "args": ["mdev-mysql-mcp-server"],
+            "command": "D:\\Projects\\mysql-mcp-server\\.venv\\Scripts\\mdev-mysql-mcp-server.exe",
+            "args": [],
             "transport": "stdio",
             "env": {
                 "MYSQL_HOST": os.getenv("MYSQL_HOST", "localhost"),
