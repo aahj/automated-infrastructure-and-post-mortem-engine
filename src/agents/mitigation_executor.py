@@ -1,3 +1,4 @@
+import json
 import os
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -5,11 +6,11 @@ from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
 
 from _mcp.adapter import get_tools
-from constants import Agents
+from constants import MAX_EXECUTOR_TOOL_ROUNDS, Agents
 
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-
+MAX_TOOL_ROUNDS = MAX_EXECUTOR_TOOL_ROUNDS
 EXECUTOR_PROMPT = """
 You are the **Mitigation Executor Agent**, a specialized automated site reliability engineer responsible for executing pre-approved recovery commands during live system incidents.
 
@@ -54,19 +55,14 @@ Review the conversation history and human approval payload below to identify the
 
 async def get_mitigation_executor_tools() -> list[BaseTool]:
     tools = await get_tools(agent=Agents.MITIGATION_EXECUTOR)
-    if not tools:
-        raise ValueError("NO TOOL FOUND")
-    return tools
+    return tools or []
 
 
-async def build_llm() -> ChatOllama:
-    tools = await get_mitigation_executor_tools()
-
-    return ChatOllama(
-        base_url=OLLAMA_BASE_URL,
-        model=MODEL_NAME,
-        temperature=0.1,  # 0.1 for deterministic tool selection and execution
-    ).bind_tools(tools)
+def _tool_error_result(message: str) -> dict:
+    return {
+        "internal_error": message,
+        "current_status": "failed_mitigation",
+    }
 
 
 async def mitigation_executor_node(state: dict) -> dict:
@@ -100,11 +96,15 @@ async def mitigation_executor_node(state: dict) -> dict:
 
     print("[MITIGATION EXECUTOR] " "Mitigating the issue....")
 
-    try:
-        llm = await build_llm()
-    except ValueError:
-        print("[MITIGATION EXECUTOR] " "NO TOOL FOUND, EXITING NOW....")
-        return {"internal_error": "NO TOOL FOUND. EXITING NOW...."}
+    tools = await get_mitigation_executor_tools()
+    if not tools:
+        return _tool_error_result("NO TOOL FOUND. EXITING NOW..")
+
+    llm = ChatOllama(
+        base_url=OLLAMA_BASE_URL,
+        model=MODEL_NAME,
+        temperature=0,  # 0 for deterministic tool selection and execution
+    ).bind_tools(tools)
     system_prompt = SystemMessage(
         content=EXECUTOR_PROMPT.format(
             incident_id=incident_id,
@@ -112,36 +112,50 @@ async def mitigation_executor_node(state: dict) -> dict:
             severity_level=severity_level,
             incident_occurred_at=incident_occurred_at,
             error_summary=error_summary,
-            raw_alert_payload=str(raw_alert_payload),
+            raw_alert_payload=json.dumps(raw_alert_payload, default=str),
             root_cause=root_cause,
-            diagnostics=str(diagnostics),
+            diagnostics=json.dumps(diagnostics, default=str),
         )
     )
-    filtered_history = [msg for msg in existing_messages if msg.type != "system"]
-
-    # A ToolMessage means the executor is continuing its current ReAct loop. Any
-    # other last message starts a fresh mitigation pass after human approval.
-    is_first_iteration = not existing_messages or not isinstance(existing_messages[-1], ToolMessage)
+    setup_messages = [system_prompt, HumanMessage(content=HUMAN_PROMPT)]
+    generated_messages = list(setup_messages)
+    conversation = [msg for msg in existing_messages if msg.type != "system"] + setup_messages
+    tool_map = {tool.name: tool for tool in tools}
     print("[MITIGATION EXECUTOR] " f"Calling Model: {MODEL_NAME}")
-
-    new_messages = []
-    if is_first_iteration:
-        new_messages = [system_prompt, HumanMessage(content=HUMAN_PROMPT)]
-
-    # Reassert executor guardrails on every tool-loop turn without appending a
-    # duplicate SystemMessage to shared state.
-    input_to_llm = [system_prompt] + filtered_history
-    if is_first_iteration:
-        input_to_llm.append(HumanMessage(content=HUMAN_PROMPT))
-
     try:
-        response = await llm.ainvoke(input_to_llm)
+        for _ in range(MAX_TOOL_ROUNDS):
+            response = await llm.ainvoke(conversation)
+            conversation.append(response)
+            generated_messages.append(response)
+            if not response.tool_calls:
+                break
+            for tool_call in response.tool_calls:
+                tool = tool_map.get(tool_call["name"])
+                args = tool_call.get("args", {})
+                if tool is None:
+                    content = _tool_error_result(f"No tool is available: {tool_call['name']}")
+                else:
+                    try:
+                        print("[MITIGATION EXECUTOR] " f"Calling tool: {tool_call['name']} with args: {args}")
+                        result = await tool.ainvoke(args)
+                        content = (
+                            result if isinstance(result, str) else json.dumps(result, default=str)
+                        )
+                    except Exception as exc:
+                        print(f"[MITIGATION EXECUTOR] Tool calling failed: {exc}")
+                        content = f"Tool calling failed: {type(exc).__name__}: {str(exc)}"
+                tool_message = ToolMessage(content=content, tool_call_id=tool_call["id"])
+                conversation.append(tool_message)
+                generated_messages.append(tool_message)
     except Exception as e:
         print(f"[MITIGATION EXECUTOR] LLM invoke error: {e}")
-        return {"internal_error": str(e)}
+        result = _tool_error_result(f"Mitigation Executor Failed: {str(e)}")
+        result["messages"] = generated_messages
+        return result
 
     return {
         "current_status": "mitigating",
         "internal_error": None,
-        "messages": new_messages + [response],
+        "messages": generated_messages,
+        "tool_iterations": 0,
     }

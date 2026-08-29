@@ -6,7 +6,9 @@ from agents.evidence_synthesizer import evidence_synthesizer_node
 from agents.human_approval import human_approval_node
 from agents.log_investigator import get_log_investigator_tools, log_investigator_node
 from agents.mitigation_engineer import mitigation_engineer_node
-from agents.mitigation_executor import get_mitigation_executor_tools, mitigation_executor_node
+from agents.mitigation_executor import (
+    mitigation_executor_node,
+)
 from agents.triage_commander import triage_node
 from constants import MAX_TOOL_ITERATION, NodeName
 from graph.state import AgentState, increment_tool_iterations
@@ -20,17 +22,10 @@ def route_after_approval(state: dict) -> str:
 
 def route_after_mitigation(state: dict) -> str:
     if state.get("is_resolved", False):
-        # The post-mortem node is not implemented yet; finish after verified recovery.
+        # TODO: The post-mortem node is not implemented yet; finish after verified recovery.
         # return NodeName.POST_MORTEM.value
         return "end"
     return NodeName.LOG_INVESTIGATOR.value
-
-
-def mitigation_executor_router(state: dict) -> str:
-    last_message = state["messages"][-1]
-    if getattr(last_message, "tool_calls", None):
-        return "tools"
-    return "verify"
 
 
 def investigator_router(state: dict) -> str:
@@ -54,7 +49,6 @@ async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list |
 
     builder = StateGraph(AgentState)
     log_investigator_tools = await get_log_investigator_tools()
-    mitigation_executor_tools = await get_mitigation_executor_tools()
 
     ### REGISTER NODES
     builder.add_node(NodeName.TRIAGE_COMMANDER.value, triage_node)
@@ -65,23 +59,22 @@ async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list |
 
     builder.add_node(NodeName.HUMAN_APPROVAL.value, human_approval_node)
     builder.add_node(NodeName.MITIGATION_EXECUTOR.value, mitigation_executor_node)
-    builder.add_node(
-        NodeName.MITIGATION_EXECUTOR_TOOL.value,
-        ToolNode(mitigation_executor_tools),
-    )
+    # builder.add_node(
+    #     NodeName.MITIGATION_EXECUTOR_TOOL.value,
+    #     ToolNode(mitigation_executor_tools),
+    # )
     builder.add_node(NodeName.MITIGATION_ENGINEER.value, mitigation_engineer_node)
     # builder.add_node(NodeName.POST_MORTEM.value, post_mortem_scribe_node)
 
     ### STATIC EDGES
     builder.add_edge(START, NodeName.TRIAGE_COMMANDER.value)
     builder.add_edge(NodeName.TRIAGE_COMMANDER.value, NodeName.LOG_INVESTIGATOR.value)
-
     # ReAct Loop: Investigator Tool Node must increment the tool iterations
     # and then route back to the Investigator Node to evaluate the tool output
     builder.add_edge(NodeName.LOG_INVESTIGATOR_TOOL.value, NodeName.INCREMENT_TOOL_COUNTER.value)
     builder.add_edge(NodeName.INCREMENT_TOOL_COUNTER.value, NodeName.LOG_INVESTIGATOR.value)
     builder.add_edge(NodeName.EVIDENCE_SYNTHESIZER.value, NodeName.HUMAN_APPROVAL.value)
-    builder.add_edge(NodeName.MITIGATION_EXECUTOR_TOOL.value, NodeName.MITIGATION_EXECUTOR.value)
+    builder.add_edge(NodeName.MITIGATION_EXECUTOR.value, NodeName.MITIGATION_ENGINEER.value)
 
     # builder.add_edge(NodeName.POST_MORTEM.value, END)
 
@@ -104,19 +97,10 @@ async def build_graph(checkpointer: AsyncPostgresSaver, interrupt_before: list |
     )
 
     builder.add_conditional_edges(
-        NodeName.MITIGATION_EXECUTOR.value,
-        mitigation_executor_router,
-        {
-            "tools": NodeName.MITIGATION_EXECUTOR_TOOL.value,
-            "verify": NodeName.MITIGATION_ENGINEER.value,
-        },
-    )
-
-    builder.add_conditional_edges(
         NodeName.MITIGATION_ENGINEER.value,
         route_after_mitigation,
         {
-    #         NodeName.POST_MORTEM.value: NodeName.POST_MORTEM.value,
+            # NodeName.POST_MORTEM.value: NodeName.POST_MORTEM.value,
             "end": END,
             NodeName.LOG_INVESTIGATOR.value: NodeName.LOG_INVESTIGATOR.value,
         },
