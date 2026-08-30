@@ -8,9 +8,10 @@ graph TD
     
     triage_commander --> log_investigator[log_investigator<br>#40;Log & Metrics Investigator - ReAct Tool Loop#41;]
     
-    log_investigator --> evidence_synthesizer[evidence_synthesizer<br>#40;Evidence Synthesizer#41;]
+    log_investigator --> human_approval{human_approval<br>#40;Human Approval Gate#41;}
 
-    evidence_synthesizer --> human_approval{human_approval<br>#40;Human Approval Gate#41;}
+
+    mitigation_executor[mitigation_executor<br>#40;Mitigation Executor - reAct Tool Loop#41;]
     
     mitigation_engineer[mitigation_engineer<br>#40;Mitigation Engineer#41;]
     post_mortem_scribe[post_mortem_scribe<br>#40;Post-Mortem Scribe via A2A#41;]
@@ -18,11 +19,13 @@ graph TD
     END([END])
 
     %% Edge Transitions
-    human_approval -.->|approved = true| mitigation_engineer
+    human_approval -.->|approved = true| mitigation_executor
     human_approval -.->|approved = false / rejected| END
     
     mitigation_engineer -.->|is_resolved = false / retry| log_investigator
     mitigation_engineer -.->|is_resolved = true| post_mortem_scribe
+    
+    mitigation_executor -.->|Execution| mitigation_engineer
     
     post_mortem_scribe --> END
 
@@ -57,14 +60,14 @@ graph TB
         %% Entry Node
         TP[triage_commander<br/>#40;Triage Commander#41;]
         
-        %% Core Diagnostic Node
+%% Core Diagnostic Node
         LI[log_investigator<br/>#40;Log & Metrics Investigator - Tool ReAct Loop#41;]
 
-        %% Diagnostic Structuring Node
-        ES[evidence_synthesizer<br/>#40;Evidence Synthesizer#41;]
-        
         %% Stateful Intercept
         HA{human_approval<br/>#40;Human Approval Gate#41;}
+        
+        %% Mitigation Executor Node
+        ME_EX[mitigation_executor<br/>#40;Mitigation Executor - reAct Tool Loop#41;]
         
         %% Core Action & Report Nodes
         ME[mitigation_engineer<br/>#40;Mitigation Engineer#41;]
@@ -72,17 +75,17 @@ graph TB
         
         %% Flow Connections
         TP --> LI
-        LI -->|Raw Tool Outputs| ES
-        ES -->|Structured Findings & Metrics| HA
-        HA -->|Approved / Execute Plan| ME
+        LI -->|Raw Tool Outputs| HA
+        HA -->|Approved / Execute Plan| ME_EX
         HA -->|Rejected / False Alarm| END_NODE([END])
         
         ME -->|Resolved| PMS
         ME -->|Failed / Needs More Data| LI
+        ME_EX -->|Execution Plan| ME
         PMS --> END_NODE
         
         %% Checkpoint Storage 
-        DB[(PostgreSQL<br/>Async Checkpoint Store)] <--->|Persists State Per Node Execution| TP & LI & ES & HA & ME & PMS
+        DB[(PostgreSQL<br/>Async Checkpoint Store)] <--->|Persists State Per Node Execution| TP & LI & HA & ME & PMS
     end
 
     %% Worker triggers graph execution
@@ -96,7 +99,6 @@ graph TB
 
     %% Connect Orchestrator to Observability Callbacks
     ORCH -.->|Emits Traces| LF
-    ES -.->|Validates Synthesis Accuracy via| DE
     ME -.->|Validates Metrics via| DE
     PMS -.->|Evaluates Report Tone via| DE
 
@@ -119,7 +121,7 @@ graph TB
     end
 
     %% All LLM Nodes query Ollama
-    TP & LI & ES & ME & PMS ---->|Local Inference Fan-In| LLM
+    TP & LI & ME & PMS ---->|Local Inference Fan-In| LLM
 
     %% External Delegation Layer (Agent-to-Agent Protocol)
     subgraph A2A [A2A LAYER - Cross-Framework Protocol]
