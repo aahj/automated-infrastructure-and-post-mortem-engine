@@ -193,3 +193,7 @@ graph TB
 
 ---
 
+## Run Tests
+```sh
+python -m unittest tests\test_mitigation_engineer.py -v
+```
