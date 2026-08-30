@@ -69,5 +69,4 @@ def human_approval_node(state: dict) -> dict:
         "final_report": state["final_report"],
         "internal_error": None,
         "approved": approved,
-        "tool_iterations": state["tool_iterations"],
     }

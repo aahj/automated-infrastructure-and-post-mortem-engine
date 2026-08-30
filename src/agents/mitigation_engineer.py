@@ -9,13 +9,13 @@ from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
 from _mcp.adapter import get_tools
-from constants import MAX_ENGINEER_TOOL_ROUNDS, Agents
+from constants import MAX_ENGINEER_TOOL_ROUNDS, MUTATING_OPERATION_REGEX, Agents
 
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 MAX_VERIFICATION_TOOL_ROUNDS = MAX_ENGINEER_TOOL_ROUNDS
 MUTATING_OPERATION_PATTERN = re.compile(
-    r"\b(delete|drop|insert|kill|post|put|patch|reload|restart|terminate|truncate|update|write)\b",
+    MUTATING_OPERATION_REGEX,
     re.IGNORECASE,
 )
 
@@ -78,7 +78,6 @@ def _tool_error_result(message: str) -> dict:
             "failed_checks": [message],
             "evidence": {},
         },
-        "tool_iterations": 0,
     }
 
 
@@ -192,6 +191,4 @@ async def mitigation_engineer_node(state: dict) -> dict:
         "current_status": "resolved" if decision.is_resolved else "failed_mitigation",
         "internal_error": None,
         "verification_result": decision.model_dump(),
-        # A failed mitigation starts a fresh investigator ReAct budget.
-        "tool_iterations": 0,
     }

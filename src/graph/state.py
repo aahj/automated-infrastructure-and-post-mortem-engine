@@ -34,7 +34,6 @@ class AgentState(TypedDict):
     final_report: str  # in markdown format
     internal_error: str | None
     approved: bool  # human approval
-    tool_iterations: int
 
 
 def initial_state(raw_alert_payload: dict, session_id: str, incident_occurred_at: str) -> dict:
@@ -57,11 +56,4 @@ def initial_state(raw_alert_payload: dict, session_id: str, incident_occurred_at
         "final_report": "",
         "internal_error": None,
         "approved": False,
-        "tool_iterations": 0,
     }
-
-
-def increment_tool_iterations(state: dict) -> dict:
-    count = state.get("tool_iterations", 0) + 1
-    print(f"[TOOL LOOP] Iteration: {count}\n")
-    return {"tool_iterations": count}

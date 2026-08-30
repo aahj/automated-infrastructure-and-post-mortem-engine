@@ -156,9 +156,4 @@ async def mitigation_executor_node(state: dict) -> dict:
         result["messages"] = generated_messages
         return result
 
-    return {
-        "current_status": "mitigating",
-        "internal_error": None,
-        "messages": generated_messages,
-        "tool_iterations": 0,
-    }
+    return {"current_status": "mitigating", "internal_error": None, "messages": generated_messages}
