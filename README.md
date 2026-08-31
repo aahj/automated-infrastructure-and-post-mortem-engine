@@ -1,5 +1,56 @@
-# Automated Infrastructure And Post-Mortem Engine
+# Automated Infrastructure and Post-Mortem Engine
+
+An AI-assisted incident-response service that accepts monitoring alerts, investigates them with
+local language models and infrastructure tools, pauses for a human decision, and executes only
+approved mitigation steps. FastAPI provides the ingress and approval API, PostgreSQL provides both
+the durable work queue and LangGraph checkpoints, and a separate worker runs the incident workflow.
+
+The project is designed to shorten the slow, repetitive part of incident response without removing
+human control from potentially destructive actions. It turns unstructured alert payloads into a
+consistent incident state, gathers evidence through MCP tools, proposes a mitigation, records an
+approval decision, executes the approved plan, and verifies recovery with read-only checks.
+
+> [!IMPORTANT]
+> This is an experimental operations tool, not a replacement for production change controls.
+> Review the MCP tools and their credentials, restrict their permissions, and test every mitigation
+> in a non-production environment before granting access to live infrastructure.
+
+## What problem it solves
+
+Incident response often requires an operator to correlate a noisy alert with application logs and
+database state, decide on a safe action, perform it, and then prove that the service recovered. That
+process is time-sensitive, difficult to standardize, and prone to losing context between tools and
+people. This engine provides one durable workflow for those steps:
+
+- normalizes arbitrary webhook payloads into a structured incident record;
+- uses tool-calling agents to gather evidence and identify a likely root cause;
+- persists graph state so an incident can safely pause for human approval;
+- separates read-only investigation and verification from mutation-capable execution;
+- resumes approved or rejected incidents through a PostgreSQL-backed queue; and
+- optionally sends LangGraph and model traces to Langfuse.
+
+## Current implementation status
+
+The checked-in workflow implements alert ingestion, triage, MCP-assisted investigation, a human
+approval interrupt, approved mitigation execution, and read-only recovery verification. The
+post-mortem scribe and external A2A/CrewAI handoff shown in the architecture diagrams are planned but
+are currently commented out in `src/graph/workflow.py`; a successfully verified incident presently
+ends the graph. The diagrams below are retained as the project workflow and target architecture.
+
+## Contents
+
+- [Workflow](#the-langgraph-flow)
+- [System architecture](#the-complete-system-architecture)
+- [How the system works](#how-the-system-works)
+- [Technology stack](#technology-stack)
+- [Local development](#local-development)
+- [API reference](#api-reference)
+- [Deployment](#deployment)
+- [Testing and code quality](#testing-and-code-quality)
+- [Operations and troubleshooting](#operations-and-troubleshooting)
+
 ---
+
 ## The LangGraph Flow
 ```mermaid
 graph TD
@@ -154,48 +205,322 @@ graph TB
     linkStyle 24,25,26 stroke:#f9e2af,stroke-width:3px,color:#f9e2af
 ```
 
-**Agent 1:** Triage Commander (triage_commander) – Structure raw data, handles noisy payload ingestion and configures state routing.
+## How the system works
 
-**Agent 2:** Log & Metrics Investigator (log_investigator) – The diagnostic hunter. Loops through tools to isolate root causes.
+1. A monitoring system sends a JSON payload to `POST /webhook/alerts`.
+2. The API assigns a UUID session ID and stores the payload as a `pending` queue row.
+3. The worker atomically claims the oldest eligible row with `FOR UPDATE SKIP LOCKED` and marks it
+   `processing`. Up to three jobs can run concurrently in one worker process.
+4. The triage agent extracts the service, severity, timestamp, and error summary with Ollama.
+5. The investigator queries the configured MySQL and Elasticsearch MCP servers, rejects mutating
+   investigation calls, and synthesizes a root cause and mitigation plan.
+6. LangGraph checkpoints the state in PostgreSQL and interrupts at the approval node. The worker
+   changes the queue status to `awaiting_approval`.
+7. An operator reviews the checkpoint through the API and approves or rejects the plan. The worker
+   claims the updated queue row and resumes the same LangGraph thread.
+8. An approval enables the mutation-capable mitigation executor; rejection ends the workflow without
+   automated mitigation. After execution, the engineer uses read-only tools to verify recovery and
+   either completes the incident or loops back to investigation.
 
-**Agent 3:** Mitigation Engineer (mitigation_engineer) – Proposes/applies safe state fixes and checks performance recoveries against metrics targets.
+### Main components
 
-**Agent 4:** Post-Mortem Scribe Client (post_mortem_scribe) – Captures final graph states and commands the cross-framework translation.
+| Component | Location | Responsibility |
+|---|---|---|
+| FastAPI service | `main.py` | Alert ingestion, incident review, and approval decisions |
+| Queue worker | `worker.py` | Claims queue rows, invokes/resumes LangGraph, and records outcomes |
+| Workflow | `src/graph/` | Shared state, graph nodes, routing, and PostgreSQL checkpointing |
+| Agents | `src/agents/` | Triage, investigation, approval, execution, and verification logic |
+| MCP integration | `src/_mcp/` | MySQL, Elasticsearch, and local memory tool connections |
+| Database | `src/db/` | Queue schema and ordered SQL migrations |
+| Observability | `src/observability/` | Optional Langfuse callback and trace configuration |
 
-**Agent 5:** CrewAI Document Specialist (External) – Hosted as a microservice, specialized purely in writing readable, long-form post-mortem compliance reports using distinct framework capabilities.
+### Queue states
 
-### Key Architecture Connections
-**MCP Integration:** The Tool Layer now houses separate MCP servers (Loki/Elastic MCP for application workloads, and a PostgreSQL MCP for direct database analysis). This enables the *log_investigator* to systematically step through the application logs, discover a DB timeout, and seamlessly query the database engine next
-
-**A2A Delegation:** The *post_mortem_scribe* node acts as an A2A Client. It passes execution arrays over local JSON-RPC endpoints to the CrewAI framework service, allowing completely seamless cross-framework processing without tying CrewAI directly into your LangGraph engine.
-
-**Quality & Observability Isolation:** Every single execution step, node switch, and model query automatically drops trace hooks down to Langfuse. When code adjustments or generated documentation reports wrap up, DeepEval steps in as an isolated asynchronous evaluator to run deterministic semantic validations against the output before completing the cycle.
-
----
+| Status | Meaning |
+|---|---|
+| `pending` | Alert is ready for its first graph invocation |
+| `processing` | A worker has claimed the incident |
+| `awaiting_approval` | Graph state is checkpointed at the human approval gate |
+| `auto_mitigation_approved` | Operator approved the plan; worker may resume execution |
+| `manual_mitigation_required` | Operator rejected automation; worker resumes and ends safely |
+| `completed` | The resumed workflow reached its terminal state |
+| `failed` | Processing raised an exception; `retry_count` was incremented |
 
 ## Technology stack
-| Technology | Version | Role |
-|------------|---------|------|
-| LangGraph | 1.1.0 | Stateful multi-agent graph orchestration |
-| MCP | 1.26.0 | Standardized agent-to-tool protocol |
-| A2A SDK | 0.3.25 | Cross-framework agent-to-agent protocol |
-| Ollama | latest | Local LLM inference (no API keys) |
-| CrewAI | 1.13.0 | Cross-framework interop via A2A |
-| Langfuse | 4.0.1 | Distributed tracing and observability |
-| DeepEval | 3.9.1 | LLM-as-judge evaluation |
 
----
+Runtime versions below are the exact pins in `requirements.txt`; development-tool versions come from
+`requirements-dev.txt`. Ollama, PostgreSQL, MySQL, Elasticsearch, and external MCP executables are
+runtime services and are not version-pinned by this repository.
 
-## Hardware Requirements
+| Package | Version | Role |
+|---|---:|---|
+| Python | 3.12 | Supported application runtime |
+| LangGraph | 1.1.0 | Stateful workflow orchestration |
+| LangGraph Checkpoint PostgreSQL | 3.1.0 | Durable graph checkpoints in PostgreSQL |
+| LangGraph Checkpoint | 4.1.1 | Checkpoint interfaces used by LangGraph |
+| LangGraph Prebuilt | 1.0.8 | Prebuilt graph and agent utilities |
+| LangChain Core | 1.3.3 | Messages, tools, and core agent abstractions |
+| LangChain Ollama | 1.0.0 | Ollama chat-model integration |
+| LangChain MCP Adapters | 0.3.0 | MCP tools exposed as LangChain tools |
+| MCP | 1.28.1 | Model Context Protocol SDK and local server support |
+| A2A SDK | 0.3.25 | Planned agent-to-agent integration |
+| FastAPI (standard) | 0.139.2 | HTTP API and server extras |
+| Pydantic | 2.13.4 | Request and structured-output validation |
+| Psycopg | 3.3.4 | Asynchronous PostgreSQL driver |
+| Psycopg Pool | 3.3.1 | Asynchronous database connection pooling |
+| python-dotenv | 1.2.2 | Local `.env` loading |
+| Langfuse | 4.14.1 | Optional LLM and workflow tracing |
+| Black (development) | 26.5.1 | Code formatting |
+| isort (development) | 8.0.1 | Import ordering |
+
+## Requirements
+
+- Python 3.12 and `pip`;
+- PostgreSQL reachable by both the API and worker;
+- Ollama with the configured model downloaded;
+- a MySQL MCP server executable and `uvx` for the Elasticsearch MCP server; and
+- access to the MySQL and Elasticsearch instances that will be investigated.
+
+The MCP adapter currently contains a Windows-specific absolute path for the MySQL MCP executable in
+`src/_mcp/adapter.py`. Change both MySQL `command` entries to the executable path for your machine
+before starting the application. `uvx` must also be on `PATH`. These external MCP server packages are
+not installed by `requirements.txt`.
+
+### Hardware guidance
+
+Memory requirements depend primarily on the Ollama model and its quantization. Treat these as starting
+points and confirm them against the model build you deploy.
+
 | Setup | RAM | VRAM | Model | Notes |
-|--------|-----|------|-------|-------|
-| Minimum | 16 GB | 8 GB | qwen2.5:7b | Fully functional |
-| Recommended | 32 GB | 24 GB | qwen2.5-coder:32b | Best tool-calling reliability |
-| CPU-only | 32 GB | None | qwen2.5:7b | Works but 5 to 10 times slower |
+|---|---:|---:|---|---|
+| Minimum GPU | 16 GB | 8 GB | `qwen2.5:7b` | Suitable for development and functional checks |
+| Recommended GPU | 32 GB | 24 GB | larger tool-capable model | More headroom and stronger tool calling |
+| CPU only | 32 GB | None | `qwen2.5:7b` | Supported by Ollama but substantially slower |
 
----
+## Local development
 
-## Run Tests
-```sh
-python -m unittest tests\test_mitigation_engineer.py -v
+The commands below use Bash from the repository root.
+
+### 1. Create the environment
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt -r requirements-dev.txt
+cp .env.example .env
 ```
+
+Do not commit `.env`; it may contain database and observability credentials.
+
+### 2. Configure services
+
+Edit `.env`:
+
+| Variable | Required | Default/example | Purpose |
+|---|---|---|---|
+| `POSTGRES_CONNECTION_URI` | Yes | `postgresql://user:pass@localhost:5432/db` | Queue and checkpoint database |
+| `OLLAMA_MODEL` | Yes | `qwen2.5:7b` | Model used by the agents |
+| `OLLAMA_BASE_URL` | Yes | `http://localhost:11434` | Ollama API endpoint |
+| `FASTAPI_ENV` | No | `development` | Environment label; currently not read by the code |
+| `MYSQL_HOST` | Yes for MCP | `localhost` | Target MySQL host |
+| `MYSQL_PORT` | Yes for MCP | `3306` | Target MySQL port |
+| `MYSQL_USER` | Yes for MCP | `root` | Target MySQL user |
+| `MYSQL_PASSWORD` | Yes for MCP | empty | Target MySQL password |
+| `MYSQL_DATABASE` | Yes for MCP | empty | Target MySQL database |
+| `ELASTICSEARCH_HOSTS` | Yes for MCP | `https://localhost:9200` | Target Elasticsearch endpoint(s) |
+| `ELASTICSEARCH_USERNAME` | As needed | empty | Elasticsearch username |
+| `ELASTICSEARCH_PASSWORD` | As needed | empty | Elasticsearch password |
+| `ELASTICSEARCH_VERIFY_CERTS` | No | `false` | Verify Elasticsearch TLS certificates |
+| `LANGFUSE_PUBLIC_KEY` | No | empty | Enables tracing when paired with the secret key |
+| `LANGFUSE_SECRET_KEY` | No | empty | Langfuse authentication secret |
+| `LANGFUSE_HOST` | No | `http://localhost:3000` | Self-hosted or cloud Langfuse endpoint |
+
+Use separate, least-privilege credentials for investigation and mitigation in production. The current
+adapter passes the same MySQL credentials to read-only and mutation-capable agents, so database-side
+permissions remain an essential safety boundary.
+
+Start Ollama and download the configured model if needed:
+
+```bash
+ollama pull qwen2.5:7b
+ollama serve
+```
+
+If Ollama is already running as a service, only the `pull` command is needed.
+
+### 3. Initialize PostgreSQL
+
+Create the database referenced by `POSTGRES_CONNECTION_URI`, then apply the ordered migrations:
+
+```bash
+python src/db/db.py
+```
+
+The API and worker also create LangGraph checkpoint tables on startup. The migration runner does not
+maintain a history table, so its SQL files must remain idempotent.
+
+### 4. Start the application
+
+Run the API and worker in separate activated terminals:
+
+```bash
+fastapi dev main.py
+```
+
+```bash
+python worker.py
+```
+
+The development API defaults to `http://127.0.0.1:8000`; interactive OpenAPI documentation is at
+`http://127.0.0.1:8000/docs`.
+
+### 5. Exercise the approval flow
+
+```bash
+response=$(curl --fail-with-body --silent --show-error \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "service": "checkout-api",
+    "severity": "critical",
+    "summary": "Database latency exceeded the alert threshold"
+  }' \
+  http://127.0.0.1:8000/webhook/alerts)
+
+printf '%s\n' "$response"
+session_id=$(printf '%s' "$response" | python -c \
+  'import json, sys; print(json.load(sys.stdin)["session_id"])')
+```
+
+Keep the returned `session_id`. Once the worker reaches the interrupt, list and inspect incidents:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  http://127.0.0.1:8000/incident/awaiting-approval
+
+curl --fail-with-body --silent --show-error \
+  "http://127.0.0.1:8000/incident/${session_id}/review"
+```
+
+Approve automatic mitigation only after reviewing its payload:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --data "{\"incident_id\": \"${session_id}\", \"approve\": true}" \
+  http://127.0.0.1:8000/incident/approve
+```
+
+Set `approve` to `false` to reject automated mitigation and route the incident to manual handling.
+
+## API reference
+
+| Method | Path | Success | Description |
+|---|---|---:|---|
+| `POST` | `/webhook/alerts` | `202` | Enqueue an arbitrary JSON alert and return its session ID |
+| `GET` | `/incident/awaiting-approval` | `200` | List all queue rows waiting for a decision |
+| `GET` | `/incident/{incident_id}/review` | `200` | Read the approval payload from the graph checkpoint |
+| `POST` | `/incident/approve` | `200` | Approve or reject an incident awaiting approval |
+
+The approval request schema is:
+
+```json
+{
+  "incident_id": "UUID returned by the webhook endpoint",
+  "approve": true
+}
+```
+
+Review returns `404` if no approval interrupt exists. Approval returns `404` if the incident is absent
+or no longer awaiting approval, preventing stale decisions from overwriting newer state. The API has
+no authentication; place it behind an authenticated gateway outside a trusted development network.
+
+## Deployment
+
+This repository does not currently include a Dockerfile, Compose file, Kubernetes manifests, or
+infrastructure-as-code. A production deployment therefore consists of two Python processes plus the
+required backing services.
+
+### Production topology
+
+- run `main.py` as a long-lived ASGI service behind TLS and authentication;
+- run `worker.py` as a separate process using the same release and environment;
+- use one shared PostgreSQL database for the ingress queue and graph checkpoints;
+- provide worker access to Ollama, MySQL, Elasticsearch, and optional Langfuse;
+- install the external MCP executables on the worker host; and
+- inject credentials from a secret manager, never from the image or repository.
+
+### Release procedure
+
+1. Provision Python 3.12 and install the pinned dependencies into an isolated environment.
+2. Configure environment variables through the deployment platform.
+3. Back up PostgreSQL and run `python src/db/db.py` once as a migration job.
+4. Start the API with a production ASGI server:
+
+   ```bash
+   fastapi run main.py --host 0.0.0.0 --port 8000
+   ```
+
+5. Start `python worker.py` under the platform's process supervisor.
+6. Verify connectivity and run one non-production alert through the approve/reject flow.
+
+Multiple worker processes can safely claim different incidents because queue selection uses row locks
+and `SKIP LOCKED`. Each worker permits three concurrent jobs. Capacity planning must include database
+pool limits, Ollama concurrency, and MCP subprocesses. The code does not yet reclaim queue rows left
+in `processing` after an abrupt worker failure, so operators must monitor and recover stale locks.
+
+### Production hardening checklist
+
+- authenticate and authorize every incident endpoint, especially approval;
+- restrict webhook sources and enforce request-size limits;
+- split read-only investigator credentials from executor credentials;
+- enable TLS certificate verification for Elasticsearch;
+- add health/readiness endpoints and centralized structured logging;
+- monitor `failed`, long-running `processing`, and `awaiting_approval` rows;
+- define PostgreSQL backup, restore, retention, and rollback procedures; and
+- pin and audit external Ollama and MCP server versions.
+
+## Testing and code quality
+
+The repository currently uses `unittest` and does not pin pytest:
+
+```bash
+python -m unittest discover -s tests -p "test_*.py" -v
+black --check .
+isort --check-only .
+```
+
+Apply formatting with `black .` and `isort .`. New tests should mock Ollama, PostgreSQL, MCP, and
+Langfuse at unit boundaries. If pytest is adopted, add it to `requirements-dev.txt` first.
+
+## Operations and troubleshooting
+
+### API or worker cannot start
+
+Confirm `POSTGRES_CONNECTION_URI` is present, the database exists, credentials are valid, and the host
+is reachable. Both processes open a PostgreSQL pool and initialize checkpoint tables during startup.
+
+### Incidents remain pending
+
+The worker must run independently from the API. Inspect its output for PostgreSQL, Ollama, MCP
+executable, or tool-startup errors. The polling loop waits five seconds after a queue-level error.
+
+### Investigation reports no tools
+
+Verify the hard-coded MySQL MCP executable path in `src/_mcp/adapter.py`, ensure `uvx` is on `PATH`,
+and validate MySQL and Elasticsearch variables in the worker environment. Tool failures cause the
+workflow to fail closed instead of inventing investigation evidence.
+
+### No Langfuse traces appear
+
+Tracing is disabled unless both Langfuse keys are non-empty. Verify the keys and `LANGFUSE_HOST`. The
+incident workflow continues without tracing when Langfuse is not configured.
+
+### Safety notes
+
+The investigator and verification agents reject tool calls whose names or arguments appear mutating,
+while the executor receives mutation-capable tools only after approval. These checks are defense in
+depth, not a security boundary. Enforce policy with separate users, MCP configuration, network
+controls, authentication, and an auditable approval process.
