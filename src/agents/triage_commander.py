@@ -85,7 +85,7 @@ def triage_node(state: dict) -> dict:
         return {"internal_error": str(e), "messages": messages + [result]}
 
     parsed_data["incident_occurred_at"] = (
-        parsed_data["incident_occurred_at"] or default_incident_timestamp
+        parsed_data.get("incident_occurred_at") or default_incident_timestamp
     )
 
     print("[TRIAGE COMMANDER] " f"LLM have structured the alert payload: {str(parsed_data)}")

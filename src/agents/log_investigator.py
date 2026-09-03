@@ -112,9 +112,16 @@ async def log_investigator_node(state: dict) -> dict:
     raw_alert_payload = state["raw_alert_payload"]
     existing_messages = state.get("messages", [])
 
-    if not severity_level or not incident_occurred_at or not error_summary or not raw_alert_payload:
+    if (
+        not service_name
+        or not severity_level
+        or not incident_occurred_at
+        or not error_summary
+        or not raw_alert_payload
+    ):
         return _error_result(
-            "Either raw alert payload, severity level or incident occurrence timestamp not provided"
+            "Service name, raw alert payload, severity level, error summary, "
+            "or incident occurrence timestamp not provided"
         )
 
     tools = await get_log_investigator_tools()
@@ -186,7 +193,7 @@ async def log_investigator_node(state: dict) -> dict:
     print(f"[LOG INVESTIGATOR] Calling Synthesizer Model: {MODEL_NAME}")
 
     try:
-        synthesizer_response = synthesizer_llm.ainvoke(
+        synthesizer_response = await synthesizer_llm.ainvoke(
             conversation + [HumanMessage(content=SYNTHESIZER_PROMPT)]
         )
         if not isinstance(synthesizer_response, InvestigatorResult):
