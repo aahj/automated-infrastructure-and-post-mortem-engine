@@ -82,6 +82,7 @@ async def mitigation_executor_node(state: dict) -> dict:
     diagnostics = state["diagnostics"]
 
     required_fields = [
+        incident_id,
         service_name,
         severity_level,
         incident_occurred_at,
