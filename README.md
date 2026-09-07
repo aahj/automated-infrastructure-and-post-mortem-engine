@@ -278,13 +278,12 @@ runtime services and are not version-pinned by this repository.
 - Python 3.12 and `pip`;
 - PostgreSQL reachable by both the API and worker;
 - Ollama with the configured model downloaded;
-- a MySQL MCP server executable and `uvx` for the Elasticsearch MCP server; and
+- `uvx` (or explicitly configured MCP server executables); and
 - access to the MySQL and Elasticsearch instances that will be investigated.
 
-The MCP adapter currently contains a Windows-specific absolute path for the MySQL MCP executable in
-`src/_mcp/adapter.py`. Change both MySQL `command` entries to the executable path for your machine
-before starting the application. `uvx` must also be on `PATH`. These external MCP server packages are
-not installed by `requirements.txt`.
+The MCP adapter starts both external servers through `uvx` by default. Override each command and its
+JSON argument list through the MCP variables below when using locally installed executables. External
+MCP server packages are not installed by `requirements.txt`.
 
 ### Hardware guidance
 
@@ -323,11 +322,15 @@ Edit `.env`:
 | `OLLAMA_MODEL` | Yes | `qwen2.5:7b` | Model used by the agents |
 | `OLLAMA_BASE_URL` | Yes | `http://localhost:11434` | Ollama API endpoint |
 | `FASTAPI_ENV` | No | `development` | Environment label; currently not read by the code |
+| `MYSQL_MCP_COMMAND` | No | `uvx` | MySQL MCP launcher executable |
+| `MYSQL_MCP_ARGS_JSON` | No | `["mdev-mysql-mcp-server"]` | JSON list of MySQL MCP launcher arguments |
 | `MYSQL_HOST` | Yes for MCP | `localhost` | Target MySQL host |
 | `MYSQL_PORT` | Yes for MCP | `3306` | Target MySQL port |
 | `MYSQL_USER` | Yes for MCP | `root` | Target MySQL user |
 | `MYSQL_PASSWORD` | Yes for MCP | empty | Target MySQL password |
 | `MYSQL_DATABASE` | Yes for MCP | empty | Target MySQL database |
+| `ELASTICSEARCH_MCP_COMMAND` | No | `uvx` | Elasticsearch MCP launcher executable |
+| `ELASTICSEARCH_MCP_ARGS_JSON` | No | `["elasticsearch-mcp-server"]` | JSON list of Elasticsearch MCP launcher arguments |
 | `ELASTICSEARCH_HOSTS` | Yes for MCP | `https://localhost:9200` | Target Elasticsearch endpoint(s) |
 | `ELASTICSEARCH_USERNAME` | As needed | empty | Elasticsearch username |
 | `ELASTICSEARCH_PASSWORD` | As needed | empty | Elasticsearch password |
@@ -359,6 +362,36 @@ python src/db/db.py
 
 The API and worker also create LangGraph checkpoint tables on startup. The migration runner does not
 maintain a history table, so its SQL files must remain idempotent.
+
+### MCP adapter tests
+
+The default test suite mocks MCP handshakes and does not start external services. Live MySQL and
+Elasticsearch MCP tests are opt-in and never use the bundled memory server. Configure a disposable
+database and test-only service credentials, then set these variables before running them:
+
+```powershell
+$env:RUN_EXTERNAL_MCP_TESTS = "1"
+$env:TEST_MYSQL_MCP_COMMAND = "uvx"
+$env:TEST_MYSQL_MCP_ARGS_JSON = '["mdev-mysql-mcp-server"]'
+$env:TEST_MYSQL_HOST = "localhost"
+$env:TEST_MYSQL_PORT = "3306"
+$env:TEST_MYSQL_USER = "test-user"
+$env:TEST_MYSQL_PASSWORD = "test-password"
+$env:TEST_MYSQL_DATABASE = "incident_test"
+$env:TEST_MYSQL_QUERY_TOOL = "query_database"
+$env:TEST_MYSQL_QUERY_ARGS_JSON = '{"sql":"SELECT 1 AS ready"}'
+$env:TEST_ELASTICSEARCH_MCP_COMMAND = "uvx"
+$env:TEST_ELASTICSEARCH_MCP_ARGS_JSON = '["elasticsearch-mcp-server"]'
+$env:TEST_ELASTICSEARCH_HOSTS = "https://localhost:9200"
+$env:TEST_ELASTICSEARCH_USERNAME = "test-user"
+$env:TEST_ELASTICSEARCH_PASSWORD = "test-password"
+$env:TEST_ELASTICSEARCH_VERIFY_CERTS = "false"
+
+.\.venv\Scripts\python.exe -m unittest tests.test_mcp_e2e -v
+```
+
+Use credentials scoped only to disposable test data. The readiness query test rejects multiple SQL
+statements and requires a `SELECT` query.
 
 ### 4. Start the application
 
@@ -509,9 +542,10 @@ executable, or tool-startup errors. The polling loop waits five seconds after a 
 
 ### Investigation reports no tools
 
-Verify the hard-coded MySQL MCP executable path in `src/_mcp/adapter.py`, ensure `uvx` is on `PATH`,
-and validate MySQL and Elasticsearch variables in the worker environment. Tool failures cause the
-workflow to fail closed instead of inventing investigation evidence.
+Verify `MYSQL_MCP_COMMAND`, `MYSQL_MCP_ARGS_JSON`, `ELASTICSEARCH_MCP_COMMAND`, and
+`ELASTICSEARCH_MCP_ARGS_JSON`; ensure their executables are on `PATH`; and validate the service
+variables in the worker environment. Tool failures cause the workflow to fail closed instead of
+inventing investigation evidence.
 
 ### No Langfuse traces appear
 
