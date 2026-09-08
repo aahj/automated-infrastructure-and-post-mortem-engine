@@ -203,7 +203,7 @@ async def log_investigator_node(state: dict) -> dict:
         result = _error_result(f"Could not synthesize evidence: {exc}")
         result["messages"] = generated_messages
         return result
-    
+
     print(f"[LOG INVESTIGATOR] Evidence Synthesized: {synthesizer_response.model_dump_json()}")
 
     evidence_message = AIMessage(content=synthesizer_response.model_dump_json())

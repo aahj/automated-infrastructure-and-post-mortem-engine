@@ -6,8 +6,9 @@ import unittest
 from collections import Counter
 from pathlib import Path
 
-from langchain_mcp_adapters.client import MultiServerMCPClient
 from dotenv import load_dotenv
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
 load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
@@ -76,7 +77,7 @@ class ExternalMCPTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreater(len(tools), 0)
         tool_names = [tool.name for tool in tools]
-        
+
         print(f"Tools available from MySQL MCP server: {json.dumps(tool_names, default=str)}")
 
         self.assertTrue(all(tool_names))

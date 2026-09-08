@@ -164,7 +164,9 @@ class LogInvestigatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["root_cause"], "Database connection exhaustion")
         self.assertEqual(result["diagnostics"], {"timeouts": 17})
         self.assertEqual(tool.calls, [{"service": "payments"}])
-        tool_messages = [message for message in result["messages"] if isinstance(message, ToolMessage)]
+        tool_messages = [
+            message for message in result["messages"] if isinstance(message, ToolMessage)
+        ]
         self.assertEqual(len(tool_messages), 1)
         self.assertIn("database connection timed out", tool_messages[0].content)
 

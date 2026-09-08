@@ -123,16 +123,16 @@ class MitigationExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "agents.mitigation_executor.get_mitigation_executor_tools",
                 new=AsyncMock(return_value=[tool]),
             ),
-            patch(
-                "agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)
-            ),
+            patch("agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)),
         ):
             result = await mitigation_executor_node(self.state)
 
         self.assertEqual(result["current_status"], "mitigating")
         self.assertIsNone(result["internal_error"])
         self.assertEqual(tool.calls, [{"service": "payments"}])
-        tool_messages = [message for message in result["messages"] if isinstance(message, ToolMessage)]
+        tool_messages = [
+            message for message in result["messages"] if isinstance(message, ToolMessage)
+        ]
         self.assertEqual(len(tool_messages), 1)
         self.assertIn('"status": "restarted"', tool_messages[0].content)
 
@@ -149,9 +149,7 @@ class MitigationExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "agents.mitigation_executor.get_mitigation_executor_tools",
                 new=AsyncMock(return_value=[FakeExecutionTool()]),
             ),
-            patch(
-                "agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)
-            ),
+            patch("agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)),
         ):
             result = await mitigation_executor_node(self.state)
 
@@ -171,9 +169,7 @@ class MitigationExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "agents.mitigation_executor.get_mitigation_executor_tools",
                 new=AsyncMock(return_value=[tool]),
             ),
-            patch(
-                "agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)
-            ),
+            patch("agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)),
         ):
             result = await mitigation_executor_node(self.state)
 
@@ -193,16 +189,12 @@ class MitigationExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "agents.mitigation_executor.get_mitigation_executor_tools",
                 new=AsyncMock(return_value=[FakeExecutionTool()]),
             ),
-            patch(
-                "agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)
-            ),
+            patch("agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)),
         ):
             result = await mitigation_executor_node(self.state)
 
         self.assertEqual(result["current_status"], "failed_mitigation")
-        self.assertEqual(
-            result["internal_error"], "Mitigation Executor Failed: Ollama unavailable"
-        )
+        self.assertEqual(result["internal_error"], "Mitigation Executor Failed: Ollama unavailable")
         # print("==>", result["messages"])
         self.assertEqual(len(result["messages"]), 2)
 
@@ -220,9 +212,7 @@ class MitigationExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "agents.mitigation_executor.get_mitigation_executor_tools",
                 new=AsyncMock(return_value=[tool]),
             ),
-            patch(
-                "agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)
-            ),
+            patch("agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)),
         ):
             result = await mitigation_executor_node(self.state)
 
