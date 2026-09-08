@@ -7,6 +7,8 @@ from collections import Counter
 from pathlib import Path
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from dotenv import load_dotenv
+load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
@@ -73,7 +75,11 @@ class ExternalMCPTests(unittest.IsolatedAsyncioTestCase):
         tools = await asyncio.wait_for(client.get_tools(server_name="mysql"), timeout=30)
 
         self.assertGreater(len(tools), 0)
-        self.assertTrue(all(tool.name for tool in tools))
+        tool_names = [tool.name for tool in tools]
+        
+        print(f"Tools available from MySQL MCP server: {json.dumps(tool_names, default=str)}")
+
+        self.assertTrue(all(tool_names))
 
     async def test_mysql_and_elasticsearch_tool_lists_are_aggregated(self):
         environment = self.build_test_environment(include_elasticsearch=True)
