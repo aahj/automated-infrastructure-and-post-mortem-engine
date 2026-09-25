@@ -411,19 +411,13 @@ The development API defaults to `http://127.0.0.1:8000`; interactive OpenAPI doc
 ### 5. Exercise the approval flow
 
 ```bash
-response=$(curl --fail-with-body --silent --show-error \
-  --request POST \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "service": "checkout-api",
-    "severity": "critical",
-    "summary": "Database latency exceeded the alert threshold"
-  }' \
-  http://127.0.0.1:8000/webhook/alerts)
-
-printf '%s\n' "$response"
-session_id=$(printf '%s' "$response" | python -c \
-  'import json, sys; print(json.load(sys.stdin)["session_id"])')
+curl --location 'localhost:8000/webhook/alerts' \
+--header 'Content-Type: application/json' \
+--data '{
+    "summary": "Database latency exceeded the alert threshold",
+    "severity": "high",
+    "service":"country-service"
+}'
 ```
 
 Keep the returned `session_id`. Once the worker reaches the interrupt, list and inspect incidents:
