@@ -69,10 +69,46 @@ class MCPAdapterConfigurationTests(unittest.TestCase):
 
         mysql = connections[Agents.LOG_INVESTIGATOR]["mysql"]
         elasticsearch = connections[Agents.LOG_INVESTIGATOR]["elasticsearch-mcp-server"]
+        pm2 = connections[Agents.LOG_INVESTIGATOR]["pm2"]
         self.assertEqual(mysql["command"], "uvx")
         self.assertEqual(mysql["args"], ["mdev-mysql-mcp-server"])
         self.assertEqual(elasticsearch["command"], "uvx")
         self.assertEqual(elasticsearch["args"], ["elasticsearch-mcp-server"])
+        self.assertEqual(pm2["command"], "pm2-mcp")
+        self.assertEqual(pm2["args"], [])
+        self.assertEqual(pm2["transport"], "stdio")
+
+    def test_pm2_configuration_overrides_command_arguments_and_runtime_environment(self):
+        environment = {
+            "PM2_MCP_COMMAND": "npx",
+            "PM2_MCP_ARGS_JSON": '["-y", "github:promptexecution/pm2-mcp", "pm2-mcp"]',
+            "PM2_HOME": "C:/pm2",
+            "PM2_MCP_NO_DAEMON": "false",
+            "PM2_SILENT": "false",
+        }
+
+        connections = build_mcp_connections(environment)
+
+        pm2 = connections[Agents.LOG_INVESTIGATOR]["pm2"]
+        self.assertEqual(pm2["command"], "npx")
+        self.assertEqual(
+            pm2["args"], ["-y", "github:promptexecution/pm2-mcp", "pm2-mcp"]
+        )
+        self.assertEqual(
+            pm2["env"],
+            {"PM2_HOME": "C:/pm2", "PM2_MCP_NO_DAEMON": "false", "PM2_SILENT": "false"},
+        )
+
+    def test_pm2_is_available_to_read_only_and_executor_clients(self):
+        connections = build_mcp_connections({})
+
+        self.assertIn("pm2", connections[Agents.LOG_INVESTIGATOR])
+        self.assertIn("pm2", connections[Agents.MITIGATION_ENGINEER])
+        self.assertIn("pm2", connections[Agents.MITIGATION_EXECUTOR])
+        self.assertIs(
+            connections[Agents.LOG_INVESTIGATOR]["pm2"],
+            connections[Agents.MITIGATION_EXECUTOR]["pm2"],
+        )
 
     def test_invalid_argument_override_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "MYSQL_MCP_ARGS_JSON"):

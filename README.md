@@ -281,9 +281,20 @@ runtime services and are not version-pinned by this repository.
 - `uvx` (or explicitly configured MCP server executables); and
 - access to the MySQL and Elasticsearch instances that will be investigated.
 
-The MCP adapter starts both external servers through `uvx` by default. Override each command and its
-JSON argument list through the MCP variables below when using locally installed executables. External
-MCP server packages are not installed by `requirements.txt`.
+The MCP adapter starts the MySQL and Elasticsearch servers through `uvx` by default and starts PM2
+through the `pm2-mcp` executable. Override each command and its JSON argument list through the MCP
+variables below when using locally installed executables. External MCP server packages are not
+installed by `requirements.txt`.
+
+Install the requested PM2 MCP fork on the worker host before starting the worker:
+
+```bash
+npm install -g github:promptexecution/pm2-mcp
+```
+
+PM2 process inspection and log tools are available to investigation agents. Process-changing tools
+are available only to the mitigation executor after the human approval checkpoint. Set `PM2_HOME`
+or `PM2_MCP_HOME` when the worker must manage a non-default PM2 process directory.
 
 ### Hardware guidance
 
@@ -335,6 +346,14 @@ Edit `.env`:
 | `ELASTICSEARCH_USERNAME` | As needed | empty | Elasticsearch username |
 | `ELASTICSEARCH_PASSWORD` | As needed | empty | Elasticsearch password |
 | `ELASTICSEARCH_VERIFY_CERTS` | No | `false` | Verify Elasticsearch TLS certificates |
+| `PM2_MCP_COMMAND` | No | `pm2-mcp` | PM2 MCP launcher executable |
+| `PM2_MCP_ARGS_JSON` | No | `[]` | JSON list of PM2 MCP launcher arguments |
+| `PM2_HOME` | No | empty | PM2 home directory used by the MCP server |
+| `PM2_MCP_HOME` | No | empty | PM2 home override specific to the MCP server |
+| `PM2_MCP_NO_DAEMON` | No | `true` | Run PM2 without connecting to a background daemon |
+| `PM2_SILENT` | No | `true` | Keep PM2 CLI output out of the stdio MCP channel |
+| `PM2_PROGRAMMATIC` | No | `true` | Run PM2 in programmatic mode |
+| `PM2_MCP_DEBUG` | No | `false` | Enable PM2 MCP debug logging |
 | `LANGFUSE_PUBLIC_KEY` | No | empty | Enables tracing when paired with the secret key |
 | `LANGFUSE_SECRET_KEY` | No | empty | Langfuse authentication secret |
 | `LANGFUSE_HOST` | No | `http://localhost:3000` | Self-hosted or cloud Langfuse endpoint |
