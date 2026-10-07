@@ -33,6 +33,27 @@ def _without_unset_values(values: dict[str, str | None]) -> dict[str, str]:
     return {key: value for key, value in values.items() if value is not None}
 
 
+def _build_pm2_connection(environment: Mapping[str, str]) -> dict[str, Any]:
+    return {
+        "command": environment.get("PM2_MCP_COMMAND", "pm2-mcp"),
+        "args": _parse_command_args(environment, "PM2_MCP_ARGS_JSON", []),
+        "transport": "stdio",
+        "env": _without_unset_values(
+            {
+                key: environment.get(key)
+                for key in (
+                    "PM2_HOME",
+                    "PM2_MCP_HOME",
+                    "PM2_MCP_NO_DAEMON",
+                    "PM2_SILENT",
+                    "PM2_PROGRAMMATIC",
+                    "PM2_MCP_DEBUG",
+                )
+            }
+        ),
+    }
+
+
 def build_mcp_connections(
     environment: Mapping[str, str] | None = None,
 ) -> dict[Agents, dict[str, dict[str, Any]]]:
@@ -69,8 +90,10 @@ def build_mcp_connections(
             "ELASTICSEARCH_VERIFY_CERTS": env.get("ELASTICSEARCH_VERIFY_CERTS", "false"),
         }
     )
+    pm2_connection = _build_pm2_connection(env)
     investigator_connections = {
         "mysql": mysql_connection,
+        "pm2": pm2_connection,
         "elasticsearch-mcp-server": {
             **elasticsearch_base,
             "env": {
@@ -81,6 +104,7 @@ def build_mcp_connections(
     }
     executor_connections = {
         "mysql": mysql_connection,
+        "pm2": pm2_connection,
         "memory": {
             "command": sys.executable,
             "args": [str(Path(__file__).parent / "server/memory.py")],
