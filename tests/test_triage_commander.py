@@ -106,12 +106,12 @@ class TriageCommanderNodeTests(unittest.TestCase):
         self.assertEqual(result["incident_occurred_at"], "2026-09-03T08:30:00Z")
 
     def test_model_error_is_returned_as_internal_error(self):
-        model = FakeTriageModel(error=RuntimeError("Ollama unavailable"))
+        model = FakeTriageModel(error=RuntimeError("LiteLLM proxy unavailable"))
 
         with patch("agents.triage_commander.build_triage_llm", return_value=model):
             result = triage_node(self.state)
 
-        self.assertEqual(result["internal_error"], "Ollama unavailable")
+        self.assertEqual(result["internal_error"], "LiteLLM proxy unavailable")
         self.assertEqual(result["messages"], model.messages)
 
     def test_invalid_model_output_is_returned_as_internal_error(self):

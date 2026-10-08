@@ -5,14 +5,15 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from _mcp.adapter import get_tools
 from constants import MAX_ENGINEER_TOOL_ROUNDS, MUTATING_OPERATION_REGEX, Agents
 
-MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+MODEL_NAME = os.getenv("LITELLM_MODEL", "qwen2.5:7b")
+LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "http://localhost:4000/v1")
+LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
 MAX_VERIFICATION_TOOL_ROUNDS = MAX_ENGINEER_TOOL_ROUNDS
 MUTATING_OPERATION_PATTERN = re.compile(
     MUTATING_OPERATION_REGEX,
@@ -111,10 +112,11 @@ async def mitigation_engineer_node(state: dict) -> dict:
         message for message in state.get("messages", []) if message.type != "system"
     ] + setup_messages
     tool_map = {tool.name: tool for tool in tools}
-    tool_llm = ChatOllama(
-        base_url=OLLAMA_BASE_URL,
+    tool_llm = ChatOpenAI(
+        base_url=LITELLM_BASE_URL,
         model=MODEL_NAME,
         temperature=0,
+        api_key=LITELLM_API_KEY,
     ).bind_tools(tools)
     generated_messages = list(setup_messages)
     completed_checks = 0
@@ -165,10 +167,11 @@ async def mitigation_engineer_node(state: dict) -> dict:
         result["messages"] = generated_messages
         return result
 
-    decision_llm = ChatOllama(
-        base_url=OLLAMA_BASE_URL,
+    decision_llm = ChatOpenAI(
+        base_url=LITELLM_BASE_URL,
         model=MODEL_NAME,
         temperature=0,
+        api_key=LITELLM_API_KEY,
     ).with_structured_output(VerificationResult)
     print(f"[MITIGATION ENGINEER] Calling Decision Model: {MODEL_NAME}")
 

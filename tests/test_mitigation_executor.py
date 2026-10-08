@@ -37,7 +37,7 @@ class ScriptedExecutorModel:
         return next(self.responses)
 
 
-class FakeChatOllama:
+class FakeChatOpenAI:
     def __init__(self, model):
         self.model = model
 
@@ -45,8 +45,8 @@ class FakeChatOllama:
         return self.model
 
 
-def chat_ollama_factory(model):
-    return lambda **kwargs: FakeChatOllama(model)
+def chat_openai_factory(model):
+    return lambda **kwargs: FakeChatOpenAI(model)
 
 
 def tool_call_response(name="restart_service", call_id="restart-call"):
@@ -123,7 +123,7 @@ class MitigationExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "agents.mitigation_executor.get_mitigation_executor_tools",
                 new=AsyncMock(return_value=[tool]),
             ),
-            patch("agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)),
+            patch("agents.mitigation_executor.ChatOpenAI", new=chat_openai_factory(model)),
         ):
             result = await mitigation_executor_node(self.state)
 
@@ -149,7 +149,7 @@ class MitigationExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "agents.mitigation_executor.get_mitigation_executor_tools",
                 new=AsyncMock(return_value=[FakeExecutionTool()]),
             ),
-            patch("agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)),
+            patch("agents.mitigation_executor.ChatOpenAI", new=chat_openai_factory(model)),
         ):
             result = await mitigation_executor_node(self.state)
 
@@ -169,7 +169,7 @@ class MitigationExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "agents.mitigation_executor.get_mitigation_executor_tools",
                 new=AsyncMock(return_value=[tool]),
             ),
-            patch("agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)),
+            patch("agents.mitigation_executor.ChatOpenAI", new=chat_openai_factory(model)),
         ):
             result = await mitigation_executor_node(self.state)
 
@@ -182,19 +182,21 @@ class MitigationExecutorTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_model_failure_returns_failed_mitigation(self):
-        model = ScriptedExecutorModel(error=RuntimeError("Ollama unavailable"))
+        model = ScriptedExecutorModel(error=RuntimeError("LiteLLM proxy unavailable"))
 
         with (
             patch(
                 "agents.mitigation_executor.get_mitigation_executor_tools",
                 new=AsyncMock(return_value=[FakeExecutionTool()]),
             ),
-            patch("agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)),
+            patch("agents.mitigation_executor.ChatOpenAI", new=chat_openai_factory(model)),
         ):
             result = await mitigation_executor_node(self.state)
 
         self.assertEqual(result["current_status"], "failed_mitigation")
-        self.assertEqual(result["internal_error"], "Mitigation Executor Failed: Ollama unavailable")
+        self.assertEqual(
+            result["internal_error"], "Mitigation Executor Failed: LiteLLM proxy unavailable"
+        )
         # print("==>", result["messages"])
         self.assertEqual(len(result["messages"]), 2)
 
@@ -212,7 +214,7 @@ class MitigationExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "agents.mitigation_executor.get_mitigation_executor_tools",
                 new=AsyncMock(return_value=[tool]),
             ),
-            patch("agents.mitigation_executor.ChatOllama", new=chat_ollama_factory(model)),
+            patch("agents.mitigation_executor.ChatOpenAI", new=chat_openai_factory(model)),
         ):
             result = await mitigation_executor_node(self.state)
 
