@@ -5,14 +5,15 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from _mcp.adapter import get_tools
 from constants import MAX_INVESTIGATOR_TOOL_ROUNDS, MUTATING_OPERATION_REGEX, Agents
 
-MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+MODEL_NAME = os.getenv("LITELLM_MODEL", "qwen2.5:7b")
+LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "http://localhost:4000/v1")
+LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
 MAX_TOOL_ROUNDS = MAX_INVESTIGATOR_TOOL_ROUNDS
 MUTATING_OPERATION_OPERATION = re.compile(MUTATING_OPERATION_REGEX, re.IGNORECASE)
 
@@ -128,10 +129,11 @@ async def log_investigator_node(state: dict) -> dict:
     if not tools:
         return _error_result("NO TOOL FOUND. Hence can't investigate the logs, EXITING NOW....")
 
-    llm = ChatOllama(
-        base_url=OLLAMA_BASE_URL,
+    llm = ChatOpenAI(
+        base_url=LITELLM_BASE_URL,
         model=MODEL_NAME,
         temperature=0.1,  # 0.1 for deterministic tool diagnostic
+        api_key=LITELLM_API_KEY,
     ).bind_tools(tools)
     system_prompt = SystemMessage(
         content=INVESTIGATOR_PROMPT.format(
@@ -187,8 +189,11 @@ async def log_investigator_node(state: dict) -> dict:
         result["messages"] = generated_messages
         return result
 
-    synthesizer_llm = ChatOllama(
-        base_url=OLLAMA_BASE_URL, model=MODEL_NAME, temperature=0
+    synthesizer_llm = ChatOpenAI(
+        base_url=LITELLM_BASE_URL,
+        model=MODEL_NAME,
+        temperature=0,
+        api_key=LITELLM_API_KEY,
     ).with_structured_output(InvestigatorResult)
     print(f"[LOG INVESTIGATOR] Calling Synthesizer Model: {MODEL_NAME}")
 

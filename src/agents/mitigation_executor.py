@@ -3,13 +3,14 @@ import os
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 
 from _mcp.adapter import get_tools
 from constants import MAX_EXECUTOR_TOOL_ROUNDS, Agents
 
-MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+MODEL_NAME = os.getenv("LITELLM_MODEL", "qwen2.5:7b")
+LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "http://localhost:4000/v1")
+LITELLM_API_KEY = os.getenv("LITELLM_API_KEY")
 MAX_TOOL_ROUNDS = MAX_EXECUTOR_TOOL_ROUNDS
 EXECUTOR_PROMPT = """
 You are the **Mitigation Executor Agent**, a specialized automated site reliability engineer responsible for executing pre-approved recovery commands during live system incidents.
@@ -101,10 +102,11 @@ async def mitigation_executor_node(state: dict) -> dict:
     if not tools:
         return _tool_error_result("NO TOOL FOUND. EXITING NOW..")
 
-    llm = ChatOllama(
-        base_url=OLLAMA_BASE_URL,
+    llm = ChatOpenAI(
+        base_url=LITELLM_BASE_URL,
         model=MODEL_NAME,
         temperature=0,  # 0 for deterministic tool selection and execution
+        api_key=LITELLM_API_KEY,
     ).bind_tools(tools)
     system_prompt = SystemMessage(
         content=EXECUTOR_PROMPT.format(

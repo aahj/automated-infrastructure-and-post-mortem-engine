@@ -54,7 +54,7 @@ class FakeDecisionModel:
         )
 
 
-class FakeChatOllama:
+class FakeChatOpenAI:
     def __init__(self, **kwargs):
         pass
 
@@ -91,7 +91,7 @@ class MitigationEngineerTests(unittest.IsolatedAsyncioTestCase):
                 "agents.mitigation_engineer.get_mitigation_engineer_tools",
                 new=AsyncMock(return_value=[FakeHealthTool()]),
             ),
-            patch("agents.mitigation_engineer.ChatOllama", FakeChatOllama),
+            patch("agents.mitigation_engineer.ChatOpenAI", FakeChatOpenAI),
         ):
             result = await mitigation_engineer_node(self.state)
 

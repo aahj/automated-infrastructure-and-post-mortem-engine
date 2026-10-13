@@ -166,12 +166,12 @@ graph TB
     LI ===>|2. Cross-References DB State| DB_MCP
     ME ===>|Reads/Writes Action History| MEM_MCP
 
-    %% Inference Layer (Ollama)
-    subgraph INF [INFERENCE LAYER - Ollama Local Host:11434]
+    %% Inference Layer (LiteLLM)
+    subgraph INF [INFERENCE LAYER - LiteLLM Proxy]
         LLM[qwen2.5 / qwen2.5-coder Models]
     end
 
-    %% All LLM Nodes query Ollama
+    %% All LLM Nodes query the LiteLLM proxy
     TP & LI & ME & PMS ---->|Local Inference Fan-In| LLM
 
     %% External Delegation Layer (Agent-to-Agent Protocol)
@@ -211,7 +211,7 @@ graph TB
 2. The API assigns a UUID session ID and stores the payload as a `pending` queue row.
 3. The worker atomically claims the oldest eligible row with `FOR UPDATE SKIP LOCKED` and marks it
    `processing`. Up to three jobs can run concurrently in one worker process.
-4. The triage agent extracts the service, severity, timestamp, and error summary with Ollama.
+4. The triage agent extracts the service, severity, timestamp, and error summary through LiteLLM.
 5. The investigator queries the configured MySQL and Elasticsearch MCP servers, rejects mutating
    investigation calls, and synthesizes a root cause and mitigation plan.
 6. LangGraph checkpoints the state in PostgreSQL and interrupts at the approval node. The worker
@@ -249,7 +249,7 @@ graph TB
 ## Technology stack
 
 Runtime versions below are the exact pins in `requirements.txt`; development-tool versions come from
-`requirements-dev.txt`. Ollama, PostgreSQL, MySQL, Elasticsearch, and external MCP executables are
+`requirements-dev.txt`. LiteLLM, PostgreSQL, MySQL, Elasticsearch, and external MCP executables are
 runtime services and are not version-pinned by this repository.
 
 | Package | Version | Role |
@@ -260,7 +260,7 @@ runtime services and are not version-pinned by this repository.
 | LangGraph Checkpoint | 4.1.1 | Checkpoint interfaces used by LangGraph |
 | LangGraph Prebuilt | 1.0.8 | Prebuilt graph and agent utilities |
 | LangChain Core | 1.3.3 | Messages, tools, and core agent abstractions |
-| LangChain Ollama | 1.0.0 | Ollama chat-model integration |
+| LangChain OpenAI | 1.2.2 | OpenAI-compatible LiteLLM chat-model integration |
 | LangChain MCP Adapters | 0.3.0 | MCP tools exposed as LangChain tools |
 | MCP | 1.28.1 | Model Context Protocol SDK and local server support |
 | A2A SDK | 0.3.25 | Planned agent-to-agent integration |
@@ -277,7 +277,7 @@ runtime services and are not version-pinned by this repository.
 
 - Python 3.12 and `pip`;
 - PostgreSQL reachable by both the API and worker;
-- Ollama with the configured model downloaded;
+- a LiteLLM proxy exposing the configured model;
 - `uvx` (or explicitly configured MCP server executables); and
 - access to the MySQL and Elasticsearch instances that will be investigated.
 
@@ -287,14 +287,14 @@ MCP server packages are not installed by `requirements.txt`.
 
 ### Hardware guidance
 
-Memory requirements depend primarily on the Ollama model and its quantization. Treat these as starting
+Memory requirements depend primarily on the model served by LiteLLM and its deployment. Treat these as starting
 points and confirm them against the model build you deploy.
 
 | Setup | RAM | VRAM | Model | Notes |
 |---|---:|---:|---|---|
 | Minimum GPU | 16 GB | 8 GB | `qwen2.5:7b` | Suitable for development and functional checks |
 | Recommended GPU | 32 GB | 24 GB | larger tool-capable model | More headroom and stronger tool calling |
-| CPU only | 32 GB | None | `qwen2.5:7b` | Supported by Ollama but substantially slower |
+| CPU only | 32 GB | None | `qwen2.5:7b` | Suitable when the LiteLLM proxy routes to a CPU-backed deployment |
 
 ## Local development
 
@@ -319,8 +319,9 @@ Edit `.env`:
 | Variable | Required | Default/example | Purpose |
 |---|---|---|---|
 | `POSTGRES_CONNECTION_URI` | Yes | `postgresql://user:pass@localhost:5432/db` | Queue and checkpoint database |
-| `OLLAMA_MODEL` | Yes | `qwen2.5:7b` | Model used by the agents |
-| `OLLAMA_BASE_URL` | Yes | `http://localhost:11434` | Ollama API endpoint |
+| `LITELLM_MODEL` | Yes | `qwen2.5:7b` | LiteLLM model alias used by the agents |
+| `LITELLM_BASE_URL` | Yes | `http://localhost:4000/v1` | LiteLLM OpenAI-compatible API endpoint |
+| `LITELLM_API_KEY` | Yes | empty | API key accepted by the LiteLLM proxy |
 | `FASTAPI_ENV` | No | `development` | Environment label; currently not read by the code |
 | `MYSQL_MCP_COMMAND` | No | `uvx` | MySQL MCP launcher executable |
 | `MYSQL_MCP_ARGS_JSON` | No | `["mdev-mysql-mcp-server"]` | JSON list of MySQL MCP launcher arguments |
@@ -343,14 +344,13 @@ Use separate, least-privilege credentials for investigation and mitigation in pr
 adapter passes the same MySQL credentials to read-only and mutation-capable agents, so database-side
 permissions remain an essential safety boundary.
 
-Start Ollama and download the configured model if needed:
+Start the LiteLLM proxy with the configured model, then verify its OpenAI-compatible endpoint:
 
 ```bash
-ollama pull qwen2.5:7b
-ollama serve
+litellm --config config.yaml
 ```
 
-If Ollama is already running as a service, only the `pull` command is needed.
+If the proxy is already running as a service, only the health check is needed.
 
 ### 3. Initialize PostgreSQL
 
@@ -475,7 +475,7 @@ required backing services.
 - run `main.py` as a long-lived ASGI service behind TLS and authentication;
 - run `worker.py` as a separate process using the same release and environment;
 - use one shared PostgreSQL database for the ingress queue and graph checkpoints;
-- provide worker access to Ollama, MySQL, Elasticsearch, and optional Langfuse;
+- provide worker access to LiteLLM, MySQL, Elasticsearch, and optional Langfuse;
 - install the external MCP executables on the worker host; and
 - inject credentials from a secret manager, never from the image or repository.
 
@@ -495,7 +495,7 @@ required backing services.
 
 Multiple worker processes can safely claim different incidents because queue selection uses row locks
 and `SKIP LOCKED`. Each worker permits three concurrent jobs. Capacity planning must include database
-pool limits, Ollama concurrency, and MCP subprocesses. The code does not yet reclaim queue rows left
+pool limits, LiteLLM concurrency, and MCP subprocesses. The code does not yet reclaim queue rows left
 in `processing` after an abrupt worker failure, so operators must monitor and recover stale locks.
 
 ### Production hardening checklist
@@ -507,7 +507,7 @@ in `processing` after an abrupt worker failure, so operators must monitor and re
 - add health/readiness endpoints and centralized structured logging;
 - monitor `failed`, long-running `processing`, and `awaiting_approval` rows;
 - define PostgreSQL backup, restore, retention, and rollback procedures; and
-- pin and audit external Ollama and MCP server versions.
+- pin and audit the LiteLLM proxy and MCP server versions.
 
 ## Testing and code quality
 
@@ -519,7 +519,7 @@ black --check .
 isort --check-only .
 ```
 
-Apply formatting with `black .` and `isort .`. New tests should mock Ollama, PostgreSQL, MCP, and
+Apply formatting with `black .` and `isort .`. New tests should mock LiteLLM, PostgreSQL, MCP, and
 Langfuse at unit boundaries. If pytest is adopted, add it to `requirements-dev.txt` first.
 
 ## Operations and troubleshooting
@@ -531,7 +531,7 @@ is reachable. Both processes open a PostgreSQL pool and initialize checkpoint ta
 
 ### Incidents remain pending
 
-The worker must run independently from the API. Inspect its output for PostgreSQL, Ollama, MCP
+The worker must run independently from the API. Inspect its output for PostgreSQL, LiteLLM, MCP
 executable, or tool-startup errors. The polling loop waits five seconds after a queue-level error.
 
 ### Investigation reports no tools
