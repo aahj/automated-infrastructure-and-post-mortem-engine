@@ -252,27 +252,6 @@ Runtime versions below are the exact pins in `requirements.txt`; development-too
 `requirements-dev.txt`. LiteLLM, PostgreSQL, MySQL, Elasticsearch, and external MCP executables are
 runtime services and are not version-pinned by this repository.
 
-| Package | Version | Role |
-|---|---:|---|
-| Python | 3.12 | Supported application runtime |
-| LangGraph | 1.1.0 | Stateful workflow orchestration |
-| LangGraph Checkpoint PostgreSQL | 3.1.0 | Durable graph checkpoints in PostgreSQL |
-| LangGraph Checkpoint | 4.1.1 | Checkpoint interfaces used by LangGraph |
-| LangGraph Prebuilt | 1.0.8 | Prebuilt graph and agent utilities |
-| LangChain Core | 1.3.3 | Messages, tools, and core agent abstractions |
-| LangChain OpenAI | 1.2.2 | OpenAI-compatible LiteLLM chat-model integration |
-| LangChain MCP Adapters | 0.3.0 | MCP tools exposed as LangChain tools |
-| MCP | 1.28.1 | Model Context Protocol SDK and local server support |
-| A2A SDK | 0.3.25 | Planned agent-to-agent integration |
-| FastAPI (standard) | 0.139.2 | HTTP API and server extras |
-| Pydantic | 2.13.4 | Request and structured-output validation |
-| Psycopg | 3.3.4 | Asynchronous PostgreSQL driver |
-| Psycopg Pool | 3.3.1 | Asynchronous database connection pooling |
-| python-dotenv | 1.2.2 | Local `.env` loading |
-| Langfuse | 4.14.1 | Optional LLM and workflow tracing |
-| Black (development) | 26.5.1 | Code formatting |
-| isort (development) | 8.0.1 | Import ordering |
-
 ## Requirements
 
 - Python 3.12 and `pip`;
@@ -313,33 +292,6 @@ cp .env.example .env
 Do not commit `.env`; it may contain database and observability credentials.
 
 ### 2. Configure services
-
-Edit `.env`:
-
-| Variable | Required | Default/example | Purpose |
-|---|---|---|---|
-| `POSTGRES_CONNECTION_URI` | Yes | `postgresql://user:pass@localhost:5432/db` | Queue and checkpoint database |
-| `LITELLM_MODEL` | Yes | `qwen2.5:7b` | LiteLLM model alias used by the agents |
-| `LITELLM_BASE_URL` | Yes | `http://localhost:4000/v1` | LiteLLM OpenAI-compatible API endpoint |
-| `LITELLM_API_KEY` | Yes | empty | API key accepted by the LiteLLM proxy |
-| `FASTAPI_ENV` | No | `development` | Environment label; currently not read by the code |
-| `MYSQL_MCP_COMMAND` | No | `uvx` | MySQL MCP launcher executable |
-| `MYSQL_MCP_ARGS_JSON` | No | `["mdev-mysql-mcp-server"]` | JSON list of MySQL MCP launcher arguments |
-| `MYSQL_HOST` | Yes for MCP | `localhost` | Target MySQL host |
-| `MYSQL_PORT` | Yes for MCP | `3306` | Target MySQL port |
-| `MYSQL_USER` | Yes for MCP | `root` | Target MySQL user |
-| `MYSQL_PASSWORD` | Yes for MCP | empty | Target MySQL password |
-| `MYSQL_DATABASE` | Yes for MCP | empty | Target MySQL database |
-| `ELASTICSEARCH_MCP_COMMAND` | No | `uvx` | Elasticsearch MCP launcher executable |
-| `ELASTICSEARCH_MCP_ARGS_JSON` | No | `["elasticsearch-mcp-server"]` | JSON list of Elasticsearch MCP launcher arguments |
-| `ELASTICSEARCH_HOSTS` | Yes for MCP | `https://localhost:9200` | Target Elasticsearch endpoint(s) |
-| `ELASTICSEARCH_USERNAME` | As needed | empty | Elasticsearch username |
-| `ELASTICSEARCH_PASSWORD` | As needed | empty | Elasticsearch password |
-| `ELASTICSEARCH_VERIFY_CERTS` | No | `false` | Verify Elasticsearch TLS certificates |
-| `LANGFUSE_PUBLIC_KEY` | No | empty | Enables tracing when paired with the secret key |
-| `LANGFUSE_SECRET_KEY` | No | empty | Langfuse authentication secret |
-| `LANGFUSE_HOST` | No | `http://localhost:3000` | Self-hosted or cloud Langfuse endpoint |
-
 Use separate, least-privilege credentials for investigation and mitigation in production. The current
 adapter passes the same MySQL credentials to read-only and mutation-capable agents, so database-side
 permissions remain an essential safety boundary.
@@ -383,26 +335,9 @@ maintain a history table, so its SQL files must remain idempotent.
 
 The default test suite mocks MCP handshakes and does not start external services. Live MySQL and
 Elasticsearch MCP tests are opt-in and never use the bundled memory server. Configure a disposable
-database and test-only service credentials, then set these variables before running them:
+database and test-only service credentials.
 
 ```powershell
-$env:RUN_EXTERNAL_MCP_TESTS = "1"
-$env:TEST_MYSQL_MCP_COMMAND = "uvx"
-$env:TEST_MYSQL_MCP_ARGS_JSON = '["mdev-mysql-mcp-server"]'
-$env:TEST_MYSQL_HOST = "localhost"
-$env:TEST_MYSQL_PORT = "3306"
-$env:TEST_MYSQL_USER = "test-user"
-$env:TEST_MYSQL_PASSWORD = "test-password"
-$env:TEST_MYSQL_DATABASE = "incident_test"
-$env:TEST_MYSQL_QUERY_TOOL = "query_database"
-$env:TEST_MYSQL_QUERY_ARGS_JSON = '{"sql":"SELECT 1 AS ready"}'
-$env:TEST_ELASTICSEARCH_MCP_COMMAND = "uvx"
-$env:TEST_ELASTICSEARCH_MCP_ARGS_JSON = '["elasticsearch-mcp-server"]'
-$env:TEST_ELASTICSEARCH_HOSTS = "https://localhost:9200"
-$env:TEST_ELASTICSEARCH_USERNAME = "test-user"
-$env:TEST_ELASTICSEARCH_PASSWORD = "test-password"
-$env:TEST_ELASTICSEARCH_VERIFY_CERTS = "false"
-
 .\.venv\Scripts\python.exe -m unittest tests.test_mcp_e2e -v
 ```
 
@@ -491,19 +426,26 @@ trusted network; the application does not provide authentication itself.
 
 - `postgres`: persistent PostgreSQL queue and checkpoint storage;
 - `litellm`: OpenAI-compatible model proxy configured by the mounted `litellm-config.yaml`;
+- `langfuse-web`: self-hosted Langfuse UI and API, exposed on host port `3000`;
+- `langfuse-worker`: Langfuse background processing;
+- `clickhouse`, `redis`, and `minio`: Langfuse tracing dependencies; and
 - `api`: FastAPI ingress and approval API, exposed on host port `8000`; and
 - `worker`: independent queue-processing service using the same application release.
 
-The API and worker use `postgres:5432` and `litellm:4000` inside the Compose network. PostgreSQL data
-is stored in the named `postgres_data` volume. The LiteLLM configuration is mounted read-only, and
-`host.docker.internal` is available for providers such as Ollama running on the Docker host.
+The API and worker use `postgres:5432`, `litellm:4000`, and `langfuse-web:3000` inside the Compose
+network. The incident engine uses the configured PostgreSQL database, while Langfuse uses a separate
+`langfuse` database on the same PostgreSQL server. PostgreSQL data is stored in `postgres_data`; the
+Langfuse ClickHouse and MinIO data use separate named volumes. The LiteLLM configuration is mounted
+read-only, and `host.docker.internal` is available for providers such as Ollama running on the Docker
+host.
 
 ### Release procedure
 
 1. Install Docker Engine or Docker Desktop with the Compose plugin on the deployment host.
-2. Check out the release and create `.env` from `.env.example`. Set strong PostgreSQL credentials,
-   the LiteLLM model and API key, MCP connection settings, and optional Langfuse credentials. Do not
-   commit `.env` or production incident payloads.
+2. Check out the release and create `.env` from `.env.example`. Set strong PostgreSQL, ClickHouse,
+   Redis, MinIO, and Langfuse application secrets, the LiteLLM model and API key, MCP connection
+   settings, and optional Langfuse project credentials. Do not commit `.env` or production incident
+   payloads.
 3. Place the production `litellm-config.yaml` in the repository root. Keep provider credentials in
    environment variables or a secret manager referenced by that configuration; do not bake secrets
    into either image.
@@ -514,34 +456,39 @@ is stored in the named `postgres_data` volume. The LiteLLM configuration is moun
    docker compose build --pull api worker
    ```
 
-5. Start the backing services first:
+5. Start PostgreSQL, LiteLLM, and the Langfuse backing services first:
 
    ```powershell
-   docker compose up -d postgres litellm
+   docker compose up -d postgres litellm clickhouse redis minio
    ```
 
-6. Apply database migrations once per release. The command runs in the API image and uses the
-   Compose PostgreSQL hostname and credentials:
+6. On an existing PostgreSQL volume, create the Langfuse database once if it was not created by
+   `docker/postgres/init/01-create-langfuse-database.sql` during initial PostgreSQL provisioning.
+   The database must be named `langfuse` and owned by the configured PostgreSQL user.
+
+7. Start Langfuse and apply the incident-engine database migrations:
 
    ```powershell
+   docker compose up -d langfuse-web langfuse-worker
    docker compose run --rm api python src/db/db.py
    ```
 
-7. Start the API and worker:
+8. Start the API and worker:
 
    ```powershell
    docker compose up -d api worker
    ```
 
-8. Verify service health and API reachability before sending production traffic:
+9. Verify service health and API reachability before sending production traffic:
 
    ```powershell
    curl http://localhost:4000/health/liveliness
+   curl http://localhost:3000/api/public/health
    curl http://localhost:8000/docs
    docker compose ps
    ```
 
-9. Send a non-production alert through the approve/reject flow and inspect the service logs:
+10. Send a non-production alert through the approve/reject flow and inspect the service logs:
 
    ```powershell
    docker compose logs --tail=200 api worker litellm
