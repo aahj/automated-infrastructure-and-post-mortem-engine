@@ -344,13 +344,29 @@ Use separate, least-privilege credentials for investigation and mitigation in pr
 adapter passes the same MySQL credentials to read-only and mutation-capable agents, so database-side
 permissions remain an essential safety boundary.
 
-Start the LiteLLM proxy with the configured model, then verify its OpenAI-compatible endpoint:
+Start the LiteLLM proxy with the configured model using Docker Compose, then verify its
+OpenAI-compatible endpoint:
 
-```bash
-litellm --config config.yaml
+```powershell
+docker compose up -d
+curl http://localhost:4000/health/liveliness
+curl http://localhost:8000/docs
 ```
 
-If the proxy is already running as a service, only the health check is needed.
+The Compose service mounts the repository-root `litellm-config.yaml` at `/app/config.yaml` and runs the
+same proxy configuration as the former host-side `litellm --config litellm-config.yaml` command. Keep that
+file available before starting the service. Processes running on the host use
+`http://localhost:4000/v1`; containers in this Compose project should use
+`http://litellm:4000/v1`. The `host.docker.internal` mapping lets the proxy reach host-running
+providers such as Ollama when referenced by `config.yaml`.
+
+The API runs at `http://localhost:8000`, and the worker runs as a separate Compose service. Both
+services use the Compose PostgreSQL and LiteLLM service names internally. Apply database migrations
+from the project environment before processing incidents:
+
+```powershell
+python src/db/db.py
+```
 
 ### 3. Initialize PostgreSQL
 
@@ -466,32 +482,87 @@ no authentication; place it behind an authenticated gateway outside a trusted de
 
 ## Deployment
 
-This repository does not currently include a Dockerfile, Compose file, Kubernetes manifests, or
-infrastructure-as-code. A production deployment therefore consists of two Python processes plus the
-required backing services.
+The repository includes separate Dockerfiles for the API and worker plus a Compose deployment for
+PostgreSQL, LiteLLM, the FastAPI service, and the queue worker. Compose is suitable for a single-host
+deployment. Put an authenticated TLS reverse proxy in front of the API before exposing it outside a
+trusted network; the application does not provide authentication itself.
 
 ### Production topology
 
-- run `main.py` as a long-lived ASGI service behind TLS and authentication;
-- run `worker.py` as a separate process using the same release and environment;
-- use one shared PostgreSQL database for the ingress queue and graph checkpoints;
-- provide worker access to LiteLLM, MySQL, Elasticsearch, and optional Langfuse;
-- install the external MCP executables on the worker host; and
-- inject credentials from a secret manager, never from the image or repository.
+- `postgres`: persistent PostgreSQL queue and checkpoint storage;
+- `litellm`: OpenAI-compatible model proxy configured by the mounted `litellm-config.yaml`;
+- `api`: FastAPI ingress and approval API, exposed on host port `8000`; and
+- `worker`: independent queue-processing service using the same application release.
+
+The API and worker use `postgres:5432` and `litellm:4000` inside the Compose network. PostgreSQL data
+is stored in the named `postgres_data` volume. The LiteLLM configuration is mounted read-only, and
+`host.docker.internal` is available for providers such as Ollama running on the Docker host.
 
 ### Release procedure
 
-1. Provision Python 3.12 and install the pinned dependencies into an isolated environment.
-2. Configure environment variables through the deployment platform.
-3. Back up PostgreSQL and run `python src/db/db.py` once as a migration job.
-4. Start the API with a production ASGI server:
+1. Install Docker Engine or Docker Desktop with the Compose plugin on the deployment host.
+2. Check out the release and create `.env` from `.env.example`. Set strong PostgreSQL credentials,
+   the LiteLLM model and API key, MCP connection settings, and optional Langfuse credentials. Do not
+   commit `.env` or production incident payloads.
+3. Place the production `litellm-config.yaml` in the repository root. Keep provider credentials in
+   environment variables or a secret manager referenced by that configuration; do not bake secrets
+   into either image.
+4. Pull the base images and build the application images:
 
-   ```bash
-   fastapi run main.py --host 0.0.0.0 --port 8000
+   ```powershell
+   docker compose pull postgres litellm
+   docker compose build --pull api worker
    ```
 
-5. Start `python worker.py` under the platform's process supervisor.
-6. Verify connectivity and run one non-production alert through the approve/reject flow.
+5. Start the backing services first:
+
+   ```powershell
+   docker compose up -d postgres litellm
+   ```
+
+6. Apply database migrations once per release. The command runs in the API image and uses the
+   Compose PostgreSQL hostname and credentials:
+
+   ```powershell
+   docker compose run --rm api python src/db/db.py
+   ```
+
+7. Start the API and worker:
+
+   ```powershell
+   docker compose up -d api worker
+   ```
+
+8. Verify service health and API reachability before sending production traffic:
+
+   ```powershell
+   curl http://localhost:4000/health/liveliness
+   curl http://localhost:8000/docs
+   docker compose ps
+   ```
+
+9. Send a non-production alert through the approve/reject flow and inspect the service logs:
+
+   ```powershell
+   docker compose logs --tail=200 api worker litellm
+   ```
+
+To deploy a new release, rebuild the application images and recreate the services:
+
+```powershell
+docker compose build --pull api worker
+docker compose up -d --force-recreate api worker
+docker compose run --rm api python src/db/db.py
+```
+
+To stop the application while retaining PostgreSQL data:
+
+```powershell
+docker compose down
+```
+
+Do not use `docker compose down -v` unless the persistent PostgreSQL volume and all stored queue and
+checkpoint data are intentionally being removed.
 
 Multiple worker processes can safely claim different incidents because queue selection uses row locks
 and `SKIP LOCKED`. Each worker permits three concurrent jobs. Capacity planning must include database
@@ -504,9 +575,10 @@ in `processing` after an abrupt worker failure, so operators must monitor and re
 - restrict webhook sources and enforce request-size limits;
 - split read-only investigator credentials from executor credentials;
 - enable TLS certificate verification for Elasticsearch;
-- add health/readiness endpoints and centralized structured logging;
+- terminate TLS and centralize structured logs at the deployment gateway;
 - monitor `failed`, long-running `processing`, and `awaiting_approval` rows;
-- define PostgreSQL backup, restore, retention, and rollback procedures; and
+- define PostgreSQL backup, restore, retention, and rollback procedures;
+- protect `.env`, `litellm-config.yaml`, Docker access, and the PostgreSQL volume; and
 - pin and audit the LiteLLM proxy and MCP server versions.
 
 ## Testing and code quality

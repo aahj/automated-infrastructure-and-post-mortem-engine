@@ -11,6 +11,64 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    ports:
+      - "4000:4000"
+    volumes:
+      - type: bind
+        source: ./litellm-config.yaml
+        target: /app/config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: incident-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      LITELLM_BASE_URL: http://litellm:4000/v1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # litellm:
+      #   condition: service_started
+    ports:
+      - "8000:8000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: incident-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      LITELLM_BASE_URL: http://litellm:4000/v1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_started
 
 volumes:
   postgres_data:
