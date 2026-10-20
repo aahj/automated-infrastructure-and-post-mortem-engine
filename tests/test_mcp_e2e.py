@@ -119,6 +119,24 @@ class ExternalMCPTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(all(tool_names))
 
+    async def test_pm2_list_processes_tool_returns_processes(self):
+        environment = self.build_pm2_test_environment()
+        connection = build_mcp_connections(environment)[Agents.LOG_INVESTIGATOR]["pm2"]
+        client = MultiServerMCPClient({"pm2": connection})
+
+        tools = await asyncio.wait_for(client.get_tools(server_name="pm2"), timeout=30)
+        process_list_tool = next(
+            (tool for tool in tools if tool.name == "pm2_list_processes"), None
+        )
+        self.assertIsNotNone(process_list_tool, "MCP tool not found: pm2_list_processes")
+
+        result = await asyncio.wait_for(process_list_tool.ainvoke({}), timeout=30)
+        serialized_result = json.dumps(result, default=str)
+        print(f"Result from pm2_list_processes tool: {result}")
+
+        self.assertTrue(serialized_result.strip())
+        self.assertRegex(serialized_result, r'(?i)(name|pid|status|pm_id)')
+
     async def test_mysql_and_elasticsearch_tool_lists_are_aggregated(self):
         environment = self.build_test_environment(include_elasticsearch=True)
         connections = build_mcp_connections(environment)
