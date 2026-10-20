@@ -33,6 +33,10 @@ ELASTICSEARCH_TEST_VARIABLES = (
     "TEST_ELASTICSEARCH_PASSWORD",
     "TEST_ELASTICSEARCH_VERIFY_CERTS",
 )
+PM2_TEST_VARIABLES = (
+    "TEST_PM2_MCP_COMMAND",
+    "TEST_PM2_MCP_ARGS_JSON",
+)
 
 
 class ExternalMCPTests(unittest.IsolatedAsyncioTestCase):
@@ -68,6 +72,25 @@ class ExternalMCPTests(unittest.IsolatedAsyncioTestCase):
             )
         return environment
 
+    def build_pm2_test_environment(self):
+        self.require_external_tests(*PM2_TEST_VARIABLES)
+        environment = {
+            "PM2_MCP_COMMAND": os.environ["TEST_PM2_MCP_COMMAND"],
+            "PM2_MCP_ARGS_JSON": os.environ["TEST_PM2_MCP_ARGS_JSON"],
+        }
+        for variable_name in (
+            "PM2_HOME",
+            "PM2_MCP_HOME",
+            "PM2_MCP_NO_DAEMON",
+            "PM2_SILENT",
+            "PM2_PROGRAMMATIC",
+            "PM2_MCP_DEBUG",
+        ):
+            test_variable_name = f"TEST_{variable_name}"
+            if test_variable_name in os.environ:
+                environment[variable_name] = os.environ[test_variable_name]
+        return environment
+
     async def test_mysql_server_connects_and_lists_tools(self):
         environment = self.build_test_environment()
         connection = build_mcp_connections(environment)[Agents.LOG_INVESTIGATOR]["mysql"]
@@ -81,6 +104,38 @@ class ExternalMCPTests(unittest.IsolatedAsyncioTestCase):
         print(f"Tools available from MySQL MCP server: {json.dumps(tool_names, default=str)}")
 
         self.assertTrue(all(tool_names))
+
+    async def test_pm2_server_connects_and_lists_tools(self):
+        environment = self.build_pm2_test_environment()
+        connection = build_mcp_connections(environment)[Agents.LOG_INVESTIGATOR]["pm2"]
+        client = MultiServerMCPClient({"pm2": connection})
+
+        tools = await asyncio.wait_for(client.get_tools(server_name="pm2"), timeout=30)
+
+        self.assertGreater(len(tools), 0)
+        tool_names = [tool.name for tool in tools]
+
+        print(f"Tools available from PM2 MCP server: {json.dumps(tool_names, default=str)}")
+
+        self.assertTrue(all(tool_names))
+
+    async def test_pm2_list_processes_tool_returns_processes(self):
+        environment = self.build_pm2_test_environment()
+        connection = build_mcp_connections(environment)[Agents.LOG_INVESTIGATOR]["pm2"]
+        client = MultiServerMCPClient({"pm2": connection})
+
+        tools = await asyncio.wait_for(client.get_tools(server_name="pm2"), timeout=30)
+        process_list_tool = next(
+            (tool for tool in tools if tool.name == "pm2_list_processes"), None
+        )
+        self.assertIsNotNone(process_list_tool, "MCP tool not found: pm2_list_processes")
+
+        result = await asyncio.wait_for(process_list_tool.ainvoke({}), timeout=30)
+        serialized_result = json.dumps(result, default=str)
+        print(f"Result from pm2_list_processes tool: {result}")
+
+        self.assertTrue(serialized_result.strip())
+        self.assertRegex(serialized_result, r'(?i)(name|pid|status|pm_id)')
 
     async def test_mysql_and_elasticsearch_tool_lists_are_aggregated(self):
         environment = self.build_test_environment(include_elasticsearch=True)
