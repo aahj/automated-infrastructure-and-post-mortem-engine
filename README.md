@@ -166,12 +166,12 @@ graph TB
     LI ===>|2. Cross-References DB State| DB_MCP
     ME ===>|Reads/Writes Action History| MEM_MCP
 
-    %% Inference Layer (Ollama)
-    subgraph INF [INFERENCE LAYER - Ollama Local Host:11434]
+    %% Inference Layer (LiteLLM)
+    subgraph INF [INFERENCE LAYER - LiteLLM Proxy]
         LLM[qwen2.5 / qwen2.5-coder Models]
     end
 
-    %% All LLM Nodes query Ollama
+    %% All LLM Nodes query the LiteLLM proxy
     TP & LI & ME & PMS ---->|Local Inference Fan-In| LLM
 
     %% External Delegation Layer (Agent-to-Agent Protocol)
@@ -211,7 +211,7 @@ graph TB
 2. The API assigns a UUID session ID and stores the payload as a `pending` queue row.
 3. The worker atomically claims the oldest eligible row with `FOR UPDATE SKIP LOCKED` and marks it
    `processing`. Up to three jobs can run concurrently in one worker process.
-4. The triage agent extracts the service, severity, timestamp, and error summary with Ollama.
+4. The triage agent extracts the service, severity, timestamp, and error summary through LiteLLM.
 5. The investigator queries the configured MySQL and Elasticsearch MCP servers, rejects mutating
    investigation calls, and synthesizes a root cause and mitigation plan.
 6. LangGraph checkpoints the state in PostgreSQL and interrupts at the approval node. The worker
@@ -249,35 +249,14 @@ graph TB
 ## Technology stack
 
 Runtime versions below are the exact pins in `requirements.txt`; development-tool versions come from
-`requirements-dev.txt`. Ollama, PostgreSQL, MySQL, Elasticsearch, and external MCP executables are
+`requirements-dev.txt`. LiteLLM, PostgreSQL, MySQL, Elasticsearch, and external MCP executables are
 runtime services and are not version-pinned by this repository.
-
-| Package | Version | Role |
-|---|---:|---|
-| Python | 3.12 | Supported application runtime |
-| LangGraph | 1.1.0 | Stateful workflow orchestration |
-| LangGraph Checkpoint PostgreSQL | 3.1.0 | Durable graph checkpoints in PostgreSQL |
-| LangGraph Checkpoint | 4.1.1 | Checkpoint interfaces used by LangGraph |
-| LangGraph Prebuilt | 1.0.8 | Prebuilt graph and agent utilities |
-| LangChain Core | 1.3.3 | Messages, tools, and core agent abstractions |
-| LangChain Ollama | 1.0.0 | Ollama chat-model integration |
-| LangChain MCP Adapters | 0.3.0 | MCP tools exposed as LangChain tools |
-| MCP | 1.28.1 | Model Context Protocol SDK and local server support |
-| A2A SDK | 0.3.25 | Planned agent-to-agent integration |
-| FastAPI (standard) | 0.139.2 | HTTP API and server extras |
-| Pydantic | 2.13.4 | Request and structured-output validation |
-| Psycopg | 3.3.4 | Asynchronous PostgreSQL driver |
-| Psycopg Pool | 3.3.1 | Asynchronous database connection pooling |
-| python-dotenv | 1.2.2 | Local `.env` loading |
-| Langfuse | 4.14.1 | Optional LLM and workflow tracing |
-| Black (development) | 26.5.1 | Code formatting |
-| isort (development) | 8.0.1 | Import ordering |
 
 ## Requirements
 
 - Python 3.12 and `pip`;
 - PostgreSQL reachable by both the API and worker;
-- Ollama with the configured model downloaded;
+- a LiteLLM proxy exposing the configured model;
 - `uvx` (or explicitly configured MCP server executables); and
 - access to the MySQL and Elasticsearch instances that will be investigated.
 
@@ -298,14 +277,14 @@ or `PM2_MCP_HOME` when the worker must manage a non-default PM2 process director
 
 ### Hardware guidance
 
-Memory requirements depend primarily on the Ollama model and its quantization. Treat these as starting
+Memory requirements depend primarily on the model served by LiteLLM and its deployment. Treat these as starting
 points and confirm them against the model build you deploy.
 
 | Setup | RAM | VRAM | Model | Notes |
 |---|---:|---:|---|---|
 | Minimum GPU | 16 GB | 8 GB | `qwen2.5:7b` | Suitable for development and functional checks |
 | Recommended GPU | 32 GB | 24 GB | larger tool-capable model | More headroom and stronger tool calling |
-| CPU only | 32 GB | None | `qwen2.5:7b` | Supported by Ollama but substantially slower |
+| CPU only | 32 GB | None | `qwen2.5:7b` | Suitable when the LiteLLM proxy routes to a CPU-backed deployment |
 
 ## Local development
 
@@ -324,52 +303,33 @@ cp .env.example .env
 Do not commit `.env`; it may contain database and observability credentials.
 
 ### 2. Configure services
-
-Edit `.env`:
-
-| Variable | Required | Default/example | Purpose |
-|---|---|---|---|
-| `POSTGRES_CONNECTION_URI` | Yes | `postgresql://user:pass@localhost:5432/db` | Queue and checkpoint database |
-| `OLLAMA_MODEL` | Yes | `qwen2.5:7b` | Model used by the agents |
-| `OLLAMA_BASE_URL` | Yes | `http://localhost:11434` | Ollama API endpoint |
-| `FASTAPI_ENV` | No | `development` | Environment label; currently not read by the code |
-| `MYSQL_MCP_COMMAND` | No | `uvx` | MySQL MCP launcher executable |
-| `MYSQL_MCP_ARGS_JSON` | No | `["mdev-mysql-mcp-server"]` | JSON list of MySQL MCP launcher arguments |
-| `MYSQL_HOST` | Yes for MCP | `localhost` | Target MySQL host |
-| `MYSQL_PORT` | Yes for MCP | `3306` | Target MySQL port |
-| `MYSQL_USER` | Yes for MCP | `root` | Target MySQL user |
-| `MYSQL_PASSWORD` | Yes for MCP | empty | Target MySQL password |
-| `MYSQL_DATABASE` | Yes for MCP | empty | Target MySQL database |
-| `ELASTICSEARCH_MCP_COMMAND` | No | `uvx` | Elasticsearch MCP launcher executable |
-| `ELASTICSEARCH_MCP_ARGS_JSON` | No | `["elasticsearch-mcp-server"]` | JSON list of Elasticsearch MCP launcher arguments |
-| `ELASTICSEARCH_HOSTS` | Yes for MCP | `https://localhost:9200` | Target Elasticsearch endpoint(s) |
-| `ELASTICSEARCH_USERNAME` | As needed | empty | Elasticsearch username |
-| `ELASTICSEARCH_PASSWORD` | As needed | empty | Elasticsearch password |
-| `ELASTICSEARCH_VERIFY_CERTS` | No | `false` | Verify Elasticsearch TLS certificates |
-| `PM2_MCP_COMMAND` | No | `pm2-mcp` | PM2 MCP launcher executable |
-| `PM2_MCP_ARGS_JSON` | No | `[]` | JSON list of PM2 MCP launcher arguments |
-| `PM2_HOME` | No | empty | PM2 home directory used by the MCP server |
-| `PM2_MCP_HOME` | No | empty | PM2 home override specific to the MCP server |
-| `PM2_MCP_NO_DAEMON` | No | `true` | Run PM2 without connecting to a background daemon |
-| `PM2_SILENT` | No | `true` | Keep PM2 CLI output out of the stdio MCP channel |
-| `PM2_PROGRAMMATIC` | No | `true` | Run PM2 in programmatic mode |
-| `PM2_MCP_DEBUG` | No | `false` | Enable PM2 MCP debug logging |
-| `LANGFUSE_PUBLIC_KEY` | No | empty | Enables tracing when paired with the secret key |
-| `LANGFUSE_SECRET_KEY` | No | empty | Langfuse authentication secret |
-| `LANGFUSE_HOST` | No | `http://localhost:3000` | Self-hosted or cloud Langfuse endpoint |
-
 Use separate, least-privilege credentials for investigation and mitigation in production. The current
 adapter passes the same MySQL credentials to read-only and mutation-capable agents, so database-side
 permissions remain an essential safety boundary.
 
-Start Ollama and download the configured model if needed:
+Start the LiteLLM proxy with the configured model using Docker Compose, then verify its
+OpenAI-compatible endpoint:
 
-```bash
-ollama pull qwen2.5:7b
-ollama serve
+```powershell
+docker compose up -d
+curl http://localhost:4000/health/liveliness
+curl http://localhost:8000/docs
 ```
 
-If Ollama is already running as a service, only the `pull` command is needed.
+The Compose service mounts the repository-root `litellm-config.yaml` at `/app/config.yaml` and runs the
+same proxy configuration as the former host-side `litellm --config litellm-config.yaml` command. Keep that
+file available before starting the service. Processes running on the host use
+`http://localhost:4000/v1`; containers in this Compose project should use
+`http://litellm:4000/v1`. The `host.docker.internal` mapping lets the proxy reach host-running
+providers such as Ollama when referenced by `config.yaml`.
+
+The API runs at `http://localhost:8000`, and the worker runs as a separate Compose service. Both
+services use the Compose PostgreSQL and LiteLLM service names internally. Apply database migrations
+from the project environment before processing incidents:
+
+```powershell
+python src/db/db.py
+```
 
 ### 3. Initialize PostgreSQL
 
@@ -386,26 +346,9 @@ maintain a history table, so its SQL files must remain idempotent.
 
 The default test suite mocks MCP handshakes and does not start external services. Live MySQL and
 Elasticsearch MCP tests are opt-in and never use the bundled memory server. Configure a disposable
-database and test-only service credentials, then set these variables before running them:
+database and test-only service credentials.
 
 ```powershell
-$env:RUN_EXTERNAL_MCP_TESTS = "1"
-$env:TEST_MYSQL_MCP_COMMAND = "uvx"
-$env:TEST_MYSQL_MCP_ARGS_JSON = '["mdev-mysql-mcp-server"]'
-$env:TEST_MYSQL_HOST = "localhost"
-$env:TEST_MYSQL_PORT = "3306"
-$env:TEST_MYSQL_USER = "test-user"
-$env:TEST_MYSQL_PASSWORD = "test-password"
-$env:TEST_MYSQL_DATABASE = "incident_test"
-$env:TEST_MYSQL_QUERY_TOOL = "query_database"
-$env:TEST_MYSQL_QUERY_ARGS_JSON = '{"sql":"SELECT 1 AS ready"}'
-$env:TEST_ELASTICSEARCH_MCP_COMMAND = "uvx"
-$env:TEST_ELASTICSEARCH_MCP_ARGS_JSON = '["elasticsearch-mcp-server"]'
-$env:TEST_ELASTICSEARCH_HOSTS = "https://localhost:9200"
-$env:TEST_ELASTICSEARCH_USERNAME = "test-user"
-$env:TEST_ELASTICSEARCH_PASSWORD = "test-password"
-$env:TEST_ELASTICSEARCH_VERIFY_CERTS = "false"
-
 .\.venv\Scripts\python.exe -m unittest tests.test_mcp_e2e -v
 ```
 
@@ -485,36 +428,103 @@ no authentication; place it behind an authenticated gateway outside a trusted de
 
 ## Deployment
 
-This repository does not currently include a Dockerfile, Compose file, Kubernetes manifests, or
-infrastructure-as-code. A production deployment therefore consists of two Python processes plus the
-required backing services.
+The repository includes separate Dockerfiles for the API and worker plus a Compose deployment for
+PostgreSQL, LiteLLM, the FastAPI service, and the queue worker. Compose is suitable for a single-host
+deployment. Put an authenticated TLS reverse proxy in front of the API before exposing it outside a
+trusted network; the application does not provide authentication itself.
 
 ### Production topology
 
-- run `main.py` as a long-lived ASGI service behind TLS and authentication;
-- run `worker.py` as a separate process using the same release and environment;
-- use one shared PostgreSQL database for the ingress queue and graph checkpoints;
-- provide worker access to Ollama, MySQL, Elasticsearch, and optional Langfuse;
-- install the external MCP executables on the worker host; and
-- inject credentials from a secret manager, never from the image or repository.
+- `postgres`: persistent PostgreSQL queue and checkpoint storage;
+- `litellm`: OpenAI-compatible model proxy configured by the mounted `litellm-config.yaml`;
+- `langfuse-web`: self-hosted Langfuse UI and API, exposed on host port `3000`;
+- `langfuse-worker`: Langfuse background processing;
+- `clickhouse`, `redis`, and `minio`: Langfuse tracing dependencies; and
+- `api`: FastAPI ingress and approval API, exposed on host port `8000`; and
+- `worker`: independent queue-processing service using the same application release.
+
+The API and worker use `postgres:5432`, `litellm:4000`, and `langfuse-web:3000` inside the Compose
+network. The incident engine uses the configured PostgreSQL database, while Langfuse uses a separate
+`langfuse` database on the same PostgreSQL server. PostgreSQL data is stored in `postgres_data`; the
+Langfuse ClickHouse and MinIO data use separate named volumes. The LiteLLM configuration is mounted
+read-only, and `host.docker.internal` is available for providers such as Ollama running on the Docker
+host.
 
 ### Release procedure
 
-1. Provision Python 3.12 and install the pinned dependencies into an isolated environment.
-2. Configure environment variables through the deployment platform.
-3. Back up PostgreSQL and run `python src/db/db.py` once as a migration job.
-4. Start the API with a production ASGI server:
+1. Install Docker Engine or Docker Desktop with the Compose plugin on the deployment host.
+2. Check out the release and create `.env` from `.env.example`. Set strong PostgreSQL, ClickHouse,
+   Redis, MinIO, and Langfuse application secrets, the LiteLLM model and API key, MCP connection
+   settings, and optional Langfuse project credentials. Do not commit `.env` or production incident
+   payloads.
+3. Place the production `litellm-config.yaml` in the repository root. Keep provider credentials in
+   environment variables or a secret manager referenced by that configuration; do not bake secrets
+   into either image.
+4. Pull the base images and build the application images:
 
-   ```bash
-   fastapi run main.py --host 0.0.0.0 --port 8000
+   ```powershell
+   docker compose pull postgres litellm
+   docker compose build --pull api worker
    ```
 
-5. Start `python worker.py` under the platform's process supervisor.
-6. Verify connectivity and run one non-production alert through the approve/reject flow.
+5. Start PostgreSQL, LiteLLM, and the Langfuse backing services first:
+
+   ```powershell
+   docker compose up -d postgres litellm clickhouse redis minio
+   ```
+
+6. On an existing PostgreSQL volume, create the Langfuse database once if it was not created by
+   `docker/postgres/init/01-create-langfuse-database.sql` during initial PostgreSQL provisioning.
+   The database must be named `langfuse` and owned by the configured PostgreSQL user.
+
+7. Start Langfuse and apply the incident-engine database migrations:
+
+   ```powershell
+   docker compose up -d langfuse-web langfuse-worker
+   docker compose run --rm api python src/db/db.py
+   ```
+
+8. Start the API and worker:
+
+   ```powershell
+   docker compose up -d api worker
+   ```
+
+9. Verify service health and API reachability before sending production traffic:
+
+   ```powershell
+   curl http://localhost:4000/health/liveliness
+   curl http://localhost:3000/api/public/health
+   curl http://localhost:8000/docs
+   docker compose ps
+   ```
+
+10. Send a non-production alert through the approve/reject flow and inspect the service logs:
+
+   ```powershell
+   docker compose logs --tail=200 api worker litellm
+   ```
+
+To deploy a new release, rebuild the application images and recreate the services:
+
+```powershell
+docker compose build --pull api worker
+docker compose up -d --force-recreate api worker
+docker compose run --rm api python src/db/db.py
+```
+
+To stop the application while retaining PostgreSQL data:
+
+```powershell
+docker compose down
+```
+
+Do not use `docker compose down -v` unless the persistent PostgreSQL volume and all stored queue and
+checkpoint data are intentionally being removed.
 
 Multiple worker processes can safely claim different incidents because queue selection uses row locks
 and `SKIP LOCKED`. Each worker permits three concurrent jobs. Capacity planning must include database
-pool limits, Ollama concurrency, and MCP subprocesses. The code does not yet reclaim queue rows left
+pool limits, LiteLLM concurrency, and MCP subprocesses. The code does not yet reclaim queue rows left
 in `processing` after an abrupt worker failure, so operators must monitor and recover stale locks.
 
 ### Production hardening checklist
@@ -523,10 +533,11 @@ in `processing` after an abrupt worker failure, so operators must monitor and re
 - restrict webhook sources and enforce request-size limits;
 - split read-only investigator credentials from executor credentials;
 - enable TLS certificate verification for Elasticsearch;
-- add health/readiness endpoints and centralized structured logging;
+- terminate TLS and centralize structured logs at the deployment gateway;
 - monitor `failed`, long-running `processing`, and `awaiting_approval` rows;
-- define PostgreSQL backup, restore, retention, and rollback procedures; and
-- pin and audit external Ollama and MCP server versions.
+- define PostgreSQL backup, restore, retention, and rollback procedures;
+- protect `.env`, `litellm-config.yaml`, Docker access, and the PostgreSQL volume; and
+- pin and audit the LiteLLM proxy and MCP server versions.
 
 ## Testing and code quality
 
@@ -538,7 +549,7 @@ black --check .
 isort --check-only .
 ```
 
-Apply formatting with `black .` and `isort .`. New tests should mock Ollama, PostgreSQL, MCP, and
+Apply formatting with `black .` and `isort .`. New tests should mock LiteLLM, PostgreSQL, MCP, and
 Langfuse at unit boundaries. If pytest is adopted, add it to `requirements-dev.txt` first.
 
 ## Operations and troubleshooting
@@ -550,7 +561,7 @@ is reachable. Both processes open a PostgreSQL pool and initialize checkpoint ta
 
 ### Incidents remain pending
 
-The worker must run independently from the API. Inspect its output for PostgreSQL, Ollama, MCP
+The worker must run independently from the API. Inspect its output for PostgreSQL, LiteLLM, MCP
 executable, or tool-startup errors. The polling loop waits five seconds after a queue-level error.
 
 ### Investigation reports no tools

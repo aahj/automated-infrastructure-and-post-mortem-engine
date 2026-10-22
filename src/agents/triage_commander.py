@@ -2,10 +2,10 @@ import json
 import os
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 
-MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+MODEL_NAME = os.getenv("LITELLM_MODEL", "qwen2.5:7b")
+LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "http://localhost:4000/v1")
 
 PROMPT = """
 You're an expert triage commander for a software engineering team. Your job is to transalate unstructured or messy incoming alert payloads into a structured format. 
@@ -27,10 +27,15 @@ Rules:
 """
 
 
-def build_triage_llm() -> ChatOllama:
+def build_triage_llm() -> ChatOpenAI:
     # temperature=0.1. Very low, because structured JSON output needs consistency.
     #  A higher temperature introduces variation that makes JSON parsing unreliable.
-    return ChatOllama(base_url=OLLAMA_BASE_URL, model=MODEL_NAME, format="json", temperature=0.1)
+    return ChatOpenAI(
+        base_url=LITELLM_BASE_URL,
+        model=MODEL_NAME,
+        temperature=0.1,
+        api_key=os.getenv("LITELLM_API_KEY"),
+    )
 
 
 def parsing_llm_response_json(json_string: str) -> dict:
