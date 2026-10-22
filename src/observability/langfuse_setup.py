@@ -35,9 +35,8 @@ def get_langfuse_run(
         return config, nullcontext()
 
     try:
-        from langfuse.langchain import CallbackHandler
-
         from langfuse import get_client, propagate_attributes
+        from langfuse.langchain import CallbackHandler
 
         global langfuse_client
 
@@ -52,7 +51,7 @@ def get_langfuse_run(
             user_id=user_id,
             tags=["local-inference"],
             metadata={
-                "model": os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
+                "model": os.getenv("LITELLM_MODEL", "qwen2.5:7b"),
                 "framework": "langgraph",
             },
         )

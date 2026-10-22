@@ -49,7 +49,7 @@ class FakeSynthesizerModel:
         return self.result
 
 
-class FakeChatOllama:
+class FakeChatOpenAI:
     def __init__(self, tool_model, synthesizer_model):
         self.tool_model = tool_model
         self.synthesizer_model = synthesizer_model
@@ -61,8 +61,8 @@ class FakeChatOllama:
         return self.synthesizer_model
 
 
-def chat_ollama_factory(tool_model, synthesizer_model):
-    return lambda **kwargs: FakeChatOllama(tool_model, synthesizer_model)
+def chat_openai_factory(tool_model, synthesizer_model):
+    return lambda **kwargs: FakeChatOpenAI(tool_model, synthesizer_model)
 
 
 class LogInvestigatorTests(unittest.IsolatedAsyncioTestCase):
@@ -153,8 +153,8 @@ class LogInvestigatorTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=[tool]),
             ),
             patch(
-                "agents.log_investigator.ChatOllama",
-                new=chat_ollama_factory(tool_model, synthesizer_model),
+                "agents.log_investigator.ChatOpenAI",
+                new=chat_openai_factory(tool_model, synthesizer_model),
             ),
         ):
             result = await log_investigator_node(self.state)
@@ -201,8 +201,8 @@ class LogInvestigatorTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=[tool]),
             ),
             patch(
-                "agents.log_investigator.ChatOllama",
-                new=chat_ollama_factory(tool_model, synthesizer_model),
+                "agents.log_investigator.ChatOpenAI",
+                new=chat_openai_factory(tool_model, synthesizer_model),
             ),
         ):
             result = await log_investigator_node(self.state)
@@ -214,7 +214,7 @@ class LogInvestigatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("potential state mutation", str(rejection.content))
 
     async def test_investigator_model_failure_returns_generated_messages(self):
-        tool_model = ScriptedToolModel(error=RuntimeError("Ollama unavailable"))
+        tool_model = ScriptedToolModel(error=RuntimeError("LiteLLM proxy unavailable"))
         synthesizer_model = FakeSynthesizerModel()
 
         with (
@@ -223,14 +223,16 @@ class LogInvestigatorTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=[FakeInvestigationTool()]),
             ),
             patch(
-                "agents.log_investigator.ChatOllama",
-                new=chat_ollama_factory(tool_model, synthesizer_model),
+                "agents.log_investigator.ChatOpenAI",
+                new=chat_openai_factory(tool_model, synthesizer_model),
             ),
         ):
             result = await log_investigator_node(self.state)
 
         self.assertEqual(result["current_status"], "investigating")
-        self.assertEqual(result["internal_error"], "Log investigator failed: Ollama unavailable")
+        self.assertEqual(
+            result["internal_error"], "Log investigator failed: LiteLLM proxy unavailable"
+        )
         self.assertEqual(len(result["messages"]), 2)
 
     async def test_synthesis_failure_returns_investigation_error(self):
@@ -243,8 +245,8 @@ class LogInvestigatorTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=[FakeInvestigationTool()]),
             ),
             patch(
-                "agents.log_investigator.ChatOllama",
-                new=chat_ollama_factory(tool_model, synthesizer_model),
+                "agents.log_investigator.ChatOpenAI",
+                new=chat_openai_factory(tool_model, synthesizer_model),
             ),
         ):
             result = await log_investigator_node(self.state)
