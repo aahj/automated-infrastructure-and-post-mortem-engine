@@ -85,6 +85,10 @@ class ExternalMCPTests(unittest.IsolatedAsyncioTestCase):
             "PM2_SILENT",
             "PM2_PROGRAMMATIC",
             "PM2_MCP_DEBUG",
+            "PM2_MCP_TRANSPORT",
+            "PM2_MCP_HOST",
+            "PM2_MCP_PORT",
+            "PM2_MCP_PATH",
         ):
             test_variable_name = f"TEST_{variable_name}"
             if test_variable_name in os.environ:

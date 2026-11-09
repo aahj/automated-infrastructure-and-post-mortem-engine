@@ -34,6 +34,19 @@ def _without_unset_values(values: dict[str, str | None]) -> dict[str, str]:
 
 
 def _build_pm2_connection(environment: Mapping[str, str]) -> dict[str, Any]:
+    transport = environment.get("PM2_MCP_TRANSPORT", "stdio")
+
+    if transport in ("http", "streamable_http"):
+        return {
+            "transport": "streamable_http",
+            "url": environment.get(
+                "PM2_MCP_URL",
+                f"http://{environment.get('PM2_MCP_HOST', '127.0.0.1')}:"
+                f"{environment.get('PM2_MCP_PORT', '8849')}"
+                f"{environment.get('PM2_MCP_PATH', '/mcp')}",
+            ),
+        }
+
     return {
         "command": environment.get("PM2_MCP_COMMAND", "pm2-mcp"),
         "args": _parse_command_args(environment, "PM2_MCP_ARGS_JSON", []),

@@ -216,6 +216,18 @@ services:
     restart: "no"
     env_file:
       - .env
+    environment:
+      RUN_EXTERNAL_MCP_TESTS: "1"
+      PM2_MCP_TRANSPORT: "streamable_http"
+      PM2_MCP_HOST: "host.docker.internal"
+      PM2_MCP_PORT: "8849"
+      PM2_MCP_PATH: "/mcp"
+      TEST_PM2_MCP_TRANSPORT: "streamable_http"
+      TEST_PM2_MCP_HOST: "host.docker.internal"
+      TEST_PM2_MCP_PORT: "8849"
+      TEST_PM2_MCP_PATH: "/mcp"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
