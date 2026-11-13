@@ -9,6 +9,27 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from constants import Agents
 
+PM2_MUTATING_TOOL_NAMES = frozenset(
+    {
+        "restart_service",
+        "stop_service",
+        "start_service",
+        "reload_service",
+        "save",
+        "flush_logs",
+        # Names exposed by the previous Node PM2 MCP server.
+        "pm2_start_process",
+        "pm2_restart_process",
+        "pm2_reload_process",
+        "pm2_stop_process",
+        "pm2_delete_process",
+        "pm2_flush_logs",
+        "pm2_reload_logs",
+        "pm2_dump",
+        "pm2_kill_daemon",
+    }
+)
+
 
 def _parse_command_args(
     environment: Mapping[str, str], variable_name: str, default: list[str]
@@ -37,15 +58,19 @@ def _build_pm2_connection(environment: Mapping[str, str]) -> dict[str, Any]:
     transport = environment.get("PM2_MCP_TRANSPORT", "stdio")
 
     if transport in ("http", "streamable_http"):
-        return {
+        connection: dict[str, Any] = {
             "transport": "streamable_http",
-            "url": environment.get(
-                "PM2_MCP_URL",
+            "url": environment.get("PM2_MCP_URL")
+            or (
                 f"http://{environment.get('PM2_MCP_HOST', '127.0.0.1')}:"
                 f"{environment.get('PM2_MCP_PORT', '8849')}"
-                f"{environment.get('PM2_MCP_PATH', '/mcp')}",
+                f"{environment.get('PM2_MCP_PATH', '/mcp')}"
             ),
         }
+        authorization = environment.get("PM2_MCP_AUTHORIZATION")
+        if authorization:
+            connection["headers"] = {"Authorization": authorization}
+        return connection
 
     return {
         "command": environment.get("PM2_MCP_COMMAND", "pm2-mcp"),
@@ -163,4 +188,7 @@ async def get_tools(agent: Agents, server_name: str | None = None):
     client = mcp_clients.get(agent)
     if client is None:
         return None
-    return await client.get_tools(server_name=server_name)
+    tools = await client.get_tools(server_name=server_name)
+    if agent == Agents.MITIGATION_EXECUTOR:
+        return tools
+    return [tool for tool in tools if getattr(tool, "name", None) not in PM2_MUTATING_TOOL_NAMES]

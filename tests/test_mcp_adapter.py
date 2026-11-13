@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
@@ -99,6 +100,36 @@ class MCPAdapterConfigurationTests(unittest.TestCase):
             {"PM2_HOME": "C:/pm2", "PM2_MCP_NO_DAEMON": "false", "PM2_SILENT": "false"},
         )
 
+    def test_pm2_http_configuration_uses_explicit_url_and_authorization(self):
+        connections = build_mcp_connections(
+            {
+                "PM2_MCP_TRANSPORT": "streamable_http",
+                "PM2_MCP_URL": "https://host.docker.internal:8850/mcp",
+                "PM2_MCP_AUTHORIZATION": "Basic dXNlcjpwYXNzd29yZA==",
+            }
+        )
+
+        pm2 = connections[Agents.LOG_INVESTIGATOR]["pm2"]
+
+        self.assertEqual(pm2["transport"], "streamable_http")
+        self.assertEqual(pm2["url"], "https://host.docker.internal:8850/mcp")
+        self.assertEqual(pm2["headers"], {"Authorization": "Basic dXNlcjpwYXNzd29yZA=="})
+
+    def test_pm2_http_fallback_url_omits_unset_authorization(self):
+        connections = build_mcp_connections(
+            {
+                "PM2_MCP_TRANSPORT": "streamable_http",
+                "PM2_MCP_HOST": "localhost",
+                "PM2_MCP_PORT": "8850",
+                "PM2_MCP_PATH": "/mcp",
+            }
+        )
+
+        pm2 = connections[Agents.LOG_INVESTIGATOR]["pm2"]
+
+        self.assertEqual(pm2["url"], "http://localhost:8850/mcp")
+        self.assertNotIn("headers", pm2)
+
     def test_pm2_is_available_to_read_only_and_executor_clients(self):
         connections = build_mcp_connections({})
 
@@ -153,6 +184,45 @@ class MCPAdapterConfigurationTests(unittest.TestCase):
 
 
 class MCPAdapterRoutingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pm2_mutating_tools_are_available_only_to_executor(self):
+        tools = [
+            SimpleNamespace(name="list_services"),
+            SimpleNamespace(name="get_status"),
+            SimpleNamespace(name="restart_service"),
+            SimpleNamespace(name="stop_service"),
+            SimpleNamespace(name="start_service"),
+            SimpleNamespace(name="reload_service"),
+            SimpleNamespace(name="save"),
+            SimpleNamespace(name="flush_logs"),
+        ]
+        read_only_client = AsyncMock()
+        executor_client = AsyncMock()
+        read_only_client.get_tools.return_value = tools
+        executor_client.get_tools.return_value = tools
+
+        with patch.dict(
+            "_mcp.adapter.mcp_clients",
+            {
+                Agents.LOG_INVESTIGATOR: read_only_client,
+                Agents.MITIGATION_ENGINEER: read_only_client,
+                Agents.MITIGATION_EXECUTOR: executor_client,
+            },
+            clear=True,
+        ):
+            investigator_tools = await get_tools(Agents.LOG_INVESTIGATOR)
+            engineer_tools = await get_tools(Agents.MITIGATION_ENGINEER)
+            executor_tools = await get_tools(Agents.MITIGATION_EXECUTOR)
+
+        self.assertEqual(
+            [tool.name for tool in investigator_tools],
+            ["list_services", "get_status"],
+        )
+        self.assertEqual(
+            [tool.name for tool in engineer_tools],
+            ["list_services", "get_status"],
+        )
+        self.assertEqual([tool.name for tool in executor_tools], [tool.name for tool in tools])
+
     async def test_omitted_server_name_requests_aggregated_tools(self):
         client = AsyncMock()
         expected_tools = [object()]

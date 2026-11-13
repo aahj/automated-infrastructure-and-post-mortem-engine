@@ -33,10 +33,6 @@ ELASTICSEARCH_TEST_VARIABLES = (
     "TEST_ELASTICSEARCH_PASSWORD",
     "TEST_ELASTICSEARCH_VERIFY_CERTS",
 )
-PM2_TEST_VARIABLES = (
-    "TEST_PM2_MCP_COMMAND",
-    "TEST_PM2_MCP_ARGS_JSON",
-)
 
 
 class ExternalMCPTests(unittest.IsolatedAsyncioTestCase):
@@ -73,27 +69,26 @@ class ExternalMCPTests(unittest.IsolatedAsyncioTestCase):
         return environment
 
     def build_pm2_test_environment(self):
-        self.require_external_tests(*PM2_TEST_VARIABLES)
-        environment = {
+        self.require_external_tests()
+        transport = os.getenv("TEST_PM2_MCP_TRANSPORT", "stdio")
+        if transport in ("http", "streamable_http"):
+            required = ("TEST_PM2_MCP_URL", "TEST_PM2_MCP_AUTHORIZATION")
+            self.require_external_tests(*required)
+            empty = [name for name in required if not os.environ[name].strip()]
+            if empty:
+                self.skipTest(f"Missing external MCP test variables: {', '.join(empty)}")
+            return {
+                "PM2_MCP_TRANSPORT": transport,
+                "PM2_MCP_URL": os.environ["TEST_PM2_MCP_URL"],
+                "PM2_MCP_AUTHORIZATION": os.environ["TEST_PM2_MCP_AUTHORIZATION"],
+            }
+
+        self.require_external_tests("TEST_PM2_MCP_COMMAND", "TEST_PM2_MCP_ARGS_JSON")
+        return {
             "PM2_MCP_COMMAND": os.environ["TEST_PM2_MCP_COMMAND"],
             "PM2_MCP_ARGS_JSON": os.environ["TEST_PM2_MCP_ARGS_JSON"],
+            "PM2_MCP_TRANSPORT": "stdio",
         }
-        for variable_name in (
-            "PM2_HOME",
-            "PM2_MCP_HOME",
-            "PM2_MCP_NO_DAEMON",
-            "PM2_SILENT",
-            "PM2_PROGRAMMATIC",
-            "PM2_MCP_DEBUG",
-            "PM2_MCP_TRANSPORT",
-            "PM2_MCP_HOST",
-            "PM2_MCP_PORT",
-            "PM2_MCP_PATH",
-        ):
-            test_variable_name = f"TEST_{variable_name}"
-            if test_variable_name in os.environ:
-                environment[variable_name] = os.environ[test_variable_name]
-        return environment
 
     async def test_mysql_server_connects_and_lists_tools(self):
         environment = self.build_test_environment()
@@ -121,25 +116,37 @@ class ExternalMCPTests(unittest.IsolatedAsyncioTestCase):
 
         print(f"Tools available from PM2 MCP server: {json.dumps(tool_names, default=str)}")
 
-        self.assertTrue(all(tool_names))
+        self.assertIn("list_services", tool_names)
+        self.assertIn("get_status", tool_names)
 
-    async def test_pm2_list_processes_tool_returns_processes(self):
+    async def test_pm2_http_server_accepts_a_new_session_after_close(self):
+        environment = self.build_pm2_test_environment()
+        if environment.get("PM2_MCP_TRANSPORT") not in ("http", "streamable_http"):
+            self.skipTest("Set TEST_PM2_MCP_TRANSPORT=streamable_http to check HTTP reconnection")
+        connection = build_mcp_connections(environment)[Agents.LOG_INVESTIGATOR]["pm2"]
+        client = MultiServerMCPClient({"pm2": connection})
+
+        first_tools = await asyncio.wait_for(client.get_tools(server_name="pm2"), timeout=30)
+        second_tools = await asyncio.wait_for(client.get_tools(server_name="pm2"), timeout=30)
+
+        self.assertIn("list_services", [tool.name for tool in first_tools])
+        self.assertIn("list_services", [tool.name for tool in second_tools])
+
+    async def test_pm2_list_services_tool_returns_a_result(self):
         environment = self.build_pm2_test_environment()
         connection = build_mcp_connections(environment)[Agents.LOG_INVESTIGATOR]["pm2"]
         client = MultiServerMCPClient({"pm2": connection})
 
         tools = await asyncio.wait_for(client.get_tools(server_name="pm2"), timeout=30)
-        process_list_tool = next(
-            (tool for tool in tools if tool.name == "pm2_list_processes"), None
-        )
-        self.assertIsNotNone(process_list_tool, "MCP tool not found: pm2_list_processes")
+        process_list_tool = next((tool for tool in tools if tool.name == "list_services"), None)
+        self.assertIsNotNone(process_list_tool, "MCP tool not found: list_services")
 
         result = await asyncio.wait_for(process_list_tool.ainvoke({}), timeout=30)
-        serialized_result = json.dumps(result, default=str)
-        print(f"Result from pm2_list_processes tool: {result}")
+        content, artifact = result
 
-        self.assertTrue(serialized_result.strip())
-        self.assertRegex(serialized_result, r'(?i)(name|pid|status|pm_id)')
+        self.assertTrue(content)
+        self.assertIsNotNone(artifact)
+        self.assertIsInstance(artifact.structured_content, dict)
 
     async def test_mysql_and_elasticsearch_tool_lists_are_aggregated(self):
         environment = self.build_test_environment(include_elasticsearch=True)

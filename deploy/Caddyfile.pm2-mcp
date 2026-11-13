@@ -1,0 +1,16 @@
+https://localhost:8850, https://host.docker.internal:8850 {
+	bind 0.0.0.0
+	tls internal
+
+	handle /mcp {
+		basic_auth {
+			pm2 {$PM2_MCP_PASSWORD_HASH}
+		}
+
+		reverse_proxy 127.0.0.1:8486 {
+			header_up Host localhost:8486
+		}
+	}
+
+	respond 404
+}
