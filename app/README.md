@@ -273,6 +273,12 @@ Create a host virtual environment, install the reviewed candidate commit, and st
 Use the `PM2_HOME` that owns the processes you want this app to inspect. Keep
 `PM2_MCP_ENV_MODE=enforce` set for the server:
 
+> **Windows limitation:** TadMSTR's server invokes `pm2` as an extensionless subprocess. On
+> Windows, `CreateProcess` does not resolve the `pm2.cmd` shim, so `list_services` fails with
+> `WinError 2` even though tool discovery and HTTP reconnection work. Run the host MCP server where
+> `pm2` is a real executable (Linux or WSL) to use process-list tools. This is a hosting constraint;
+> the repo does not wrap or replace the candidate's PM2 subprocess call.
+
 ```powershell
 py -3.12 -m venv .venv-pm2-mcp
 .\.venv-pm2-mcp\Scripts\Activate.ps1
@@ -412,8 +418,14 @@ run:
 $env:SSL_CERT_FILE = (Resolve-Path .\secrets\pm2-mcp-root.crt).Path
 python -m unittest `
   tests.test_mcp_e2e.ExternalMCPTests.test_pm2_server_connects_and_lists_tools `
-  tests.test_mcp_e2e.ExternalMCPTests.test_pm2_http_server_accepts_a_new_session_after_close `
-  tests.test_mcp_e2e.ExternalMCPTests.test_pm2_list_services_tool_returns_a_result -v
+  tests.test_mcp_e2e.ExternalMCPTests.test_pm2_http_server_accepts_a_new_session_after_close -v
+```
+
+These two checks exercise HTTP tool discovery and reconnection and can run against a Windows-hosted
+server. Run the process-list check only when the server runs on Linux/WSL with an executable `pm2`:
+
+```powershell
+python -m unittest tests.test_mcp_e2e.ExternalMCPTests.test_pm2_list_services_tool_returns_a_result -v
 ```
 
 Run all e2e cases (PM2, MySQL, and Elasticsearch) with:
@@ -422,6 +434,9 @@ Run all e2e cases (PM2, MySQL, and Elasticsearch) with:
 python -m unittest tests.test_mcp_e2e -v
 ```
 
+The full suite includes the PM2 process-list call. On Windows, run that case only after moving the
+host PM2 MCP server to Linux/WSL; otherwise run the HTTP discovery/reconnection checks separately.
+
 To run the e2e tests from Compose, first enable Docker Desktop host networking and complete the
 certificate setup above. Compose overrides the test URL to `https://host.docker.internal:8850/mcp`
 and mounts the CA read-only:
@@ -429,11 +444,20 @@ and mounts the CA read-only:
 ```powershell
 docker compose run --rm --no-deps --entrypoint python test -m unittest `
   tests.test_mcp_e2e.ExternalMCPTests.test_pm2_server_connects_and_lists_tools `
-  tests.test_mcp_e2e.ExternalMCPTests.test_pm2_http_server_accepts_a_new_session_after_close `
+  tests.test_mcp_e2e.ExternalMCPTests.test_pm2_http_server_accepts_a_new_session_after_close -v
+```
+
+The Compose process-list check has the same Linux/WSL host requirement because the MCP server, not
+the test container, executes `pm2`:
+
+```powershell
+docker compose run --rm --no-deps --entrypoint python test -m unittest `
   tests.test_mcp_e2e.ExternalMCPTests.test_pm2_list_services_tool_returns_a_result -v
 ```
 
 Run the full suite in Compose with `docker compose run --rm test`.
+
+The Compose full suite has the same host-platform limitation for the PM2 process-list case.
 
 With only PM2 proxy variables configured, MySQL and Elasticsearch e2e cases skip. To run the full
 external suite, configure their `TEST_MYSQL_*` and `TEST_ELASTICSEARCH_*` values for disposable
