@@ -54,42 +54,54 @@ def _without_unset_values(values: dict[str, str | None]) -> dict[str, str]:
     return {key: value for key, value in values.items() if value is not None}
 
 
-def _build_pm2_connection(environment: Mapping[str, str]) -> dict[str, Any]:
-    transport = environment.get("PM2_MCP_TRANSPORT", "stdio")
-
-    if transport in ("http", "streamable_http"):
+def _build_pm2_connection(
+    environment: Mapping[str, str], token_variable: str
+) -> dict[str, Any]:
+    transport = environment.get("PM2_MCP_TRANSPORT", "streamable_http")
+    if transport == "stdio":
+        access = "write" if token_variable == "PM2_MCP_WRITE_TOKEN" else "read"
+        server_directory = Path(__file__).parents[3] / "pm2-mcp"
         connection: dict[str, Any] = {
-            "transport": "streamable_http",
-            "url": environment.get("PM2_MCP_URL")
-            or (
-                f"http://{environment.get('PM2_MCP_HOST', '127.0.0.1')}:"
-                f"{environment.get('PM2_MCP_PORT', '8849')}"
-                f"{environment.get('PM2_MCP_PATH', '/mcp')}"
+            "command": environment.get("PM2_MCP_COMMAND", "node"),
+            "args": _parse_command_args(
+                environment,
+                "PM2_MCP_ARGS_JSON",
+                [str(server_directory / "dist" / "index.js")],
+            ),
+            "transport": "stdio",
+            "env": _without_unset_values(
+                {
+                    "PM2_HOME": environment.get("PM2_HOME") or None,
+                    "PM2_MCP_TRANSPORT": "stdio",
+                    "PM2_MCP_STDIO_ACCESS": access,
+                    "PM2_MCP_ALLOW_DAEMON_START": environment.get(
+                        "PM2_MCP_ALLOW_DAEMON_START"
+                    ),
+                    "PM2_MCP_START_TARGETS_JSON": environment.get(
+                        "PM2_MCP_START_TARGETS_JSON"
+                    ),
+                }
             ),
         }
-        authorization = environment.get("PM2_MCP_AUTHORIZATION")
-        if authorization:
-            connection["headers"] = {"Authorization": authorization}
+        working_directory = environment.get("PM2_MCP_CWD")
+        if working_directory:
+            connection["cwd"] = working_directory
+        else:
+            connection["cwd"] = str(server_directory)
         return connection
+    if transport not in {"http", "streamable_http"}:
+        raise ValueError("PM2_MCP_TRANSPORT must be stdio, http, or streamable_http")
 
-    return {
-        "command": environment.get("PM2_MCP_COMMAND", "pm2-mcp"),
-        "args": _parse_command_args(environment, "PM2_MCP_ARGS_JSON", []),
-        "transport": "stdio",
-        "env": _without_unset_values(
-            {
-                key: environment.get(key)
-                for key in (
-                    "PM2_HOME",
-                    "PM2_MCP_HOME",
-                    "PM2_MCP_NO_DAEMON",
-                    "PM2_SILENT",
-                    "PM2_PROGRAMMATIC",
-                    "PM2_MCP_DEBUG",
-                )
-            }
-        ),
+    connection: dict[str, Any] = {
+        "transport": "streamable_http",
+        "url": environment.get("PM2_MCP_URL", "http://host.docker.internal:8486/mcp"),
     }
+    token = environment.get(token_variable, "").strip()
+    if token:
+        if any(character.isspace() for character in token) or token.lower().startswith("bearer "):
+            raise ValueError(f"{token_variable} must contain a raw token without whitespace")
+        connection["headers"] = {"Authorization": f"Bearer {token}"}
+    return connection
 
 
 def build_mcp_connections(
@@ -128,10 +140,11 @@ def build_mcp_connections(
             "ELASTICSEARCH_VERIFY_CERTS": env.get("ELASTICSEARCH_VERIFY_CERTS", "false"),
         }
     )
-    pm2_connection = _build_pm2_connection(env)
+    read_pm2_connection = _build_pm2_connection(env, "PM2_MCP_READ_TOKEN")
+    write_pm2_connection = _build_pm2_connection(env, "PM2_MCP_WRITE_TOKEN")
     investigator_connections = {
         "mysql": mysql_connection,
-        "pm2": pm2_connection,
+        "pm2": read_pm2_connection,
         "elasticsearch-mcp-server": {
             **elasticsearch_base,
             "env": {
@@ -142,7 +155,7 @@ def build_mcp_connections(
     }
     executor_connections = {
         "mysql": mysql_connection,
-        "pm2": pm2_connection,
+        "pm2": write_pm2_connection,
         "memory": {
             "command": sys.executable,
             "args": [str(Path(__file__).parent / "server/memory.py")],

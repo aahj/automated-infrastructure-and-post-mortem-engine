@@ -260,75 +260,54 @@ runtime services and are not version-pinned by this repository.
 - `uvx` (or explicitly configured MCP server executables); and
 - access to the MySQL and Elasticsearch instances that will be investigated.
 
-The MCP adapter starts MySQL and Elasticsearch through `uvx`. PM2 uses the host-side TadMSTR
-`pm2-mcp` server at a reviewed, pinned commit. It stays bound to host loopback; the Caddy service in
-Compose uses host networking to reach it and provides TLS plus Basic authentication to the worker
-and test containers. On Docker Desktop, enable host networking in Settings > Resources > Network;
-Docker Desktop 4.34 or newer is required. Only Caddy uses host networking. The worker and test
-containers remain on the Compose network.
+The MCP adapter starts MySQL and Elasticsearch through `uvx`. PM2 is managed by the repository's
+cross-platform Node server in `../pm2-mcp/`; the server calls PM2's programmatic API and serves
+Streamable HTTP directly. It binds to `0.0.0.0:8486` for Docker Desktop access and requires separate
+read and write Bearer tokens. This is plaintext HTTP: restrict inbound TCP 8486 with the host
+firewall to Docker client traffic and do not expose the port to a LAN or public network. Tokens are
+static service credentials sent in the Authorization header, not OAuth tokens. No Caddy, TLS, OAuth
+issuer, or Docker host-networking setting is used; rotate tokens by restarting the server with new
+values.
 
-### Configure host PM2 MCP and the Caddy proxy
+### Configure host PM2 MCP
 
-Create a host virtual environment, install the reviewed candidate commit, and start it on loopback.
-Use the `PM2_HOME` that owns the processes you want this app to inspect. Keep
-`PM2_MCP_ENV_MODE=enforce` set for the server:
-
-> **Windows limitation:** TadMSTR's server invokes `pm2` as an extensionless subprocess. On
-> Windows, `CreateProcess` does not resolve the `pm2.cmd` shim, so `list_services` fails with
-> `WinError 2` even though tool discovery and HTTP reconnection work. Run the host MCP server where
-> `pm2` is a real executable (Linux or WSL) to use process-list tools. This is a hosting constraint;
-> the repo does not wrap or replace the candidate's PM2 subprocess call.
+Install Node.js 20 or newer on the host. Configure `PM2_HOME` to the directory that owns the PM2
+processes to manage, and set two different random tokens of at least 32 characters. The server
+requires an explicit PM2 home so it cannot silently connect to a default PM2 state directory.
+Daemon startup is disabled by default; set `PM2_MCP_ALLOW_DAEMON_START=true` only when you want the
+server to create a persistent PM2 daemon if one is not already running. In PowerShell:
 
 ```powershell
-py -3.12 -m venv .venv-pm2-mcp
-.\.venv-pm2-mcp\Scripts\Activate.ps1
-python -m pip install "git+https://github.com/TadMSTR/pm2-mcp.git@e30ab78f3d08f807d0ae6c0ddcc290144b987526"
+cd ..\pm2-mcp
+npm ci
 $env:PM2_HOME = "$env:USERPROFILE\.pm2"
-$env:PM2_MCP_ENV_MODE = "enforce"
-pm2-mcp --host 127.0.0.1 --port 8486
+$env:PM2_MCP_READ_TOKEN = "<long-random-read-token>"
+$env:PM2_MCP_WRITE_TOKEN = "<different-long-random-write-token>"
+npm run build
+npm start
 ```
 
-Keep that process running. In a second terminal, copy `.env.example` to `.env`, set a long random
-proxy password, and make both values for Caddy and the MCP client:
-
-```powershell
-$password = Read-Host "PM2 MCP proxy password"
-docker run --rm -it caddy:2 caddy hash-password
-$basic = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("pm2:$password"))
-"Basic $basic"
-```
-
-Put the resulting bcrypt hash in `.env` as a single-quoted value for `PM2_MCP_PASSWORD_HASH` (the
-hash contains `$` characters). Put the printed `Basic ...` value in `PM2_MCP_AUTHORIZATION` and
-`TEST_PM2_MCP_AUTHORIZATION`. Set `PM2_MCP_CA_CERT_PATH=./secrets/pm2-mcp-root.crt`. Keep `.env`
-and `secrets/` private; they are git-ignored.
-
-Start the proxy once to create Caddy's local CA, then copy its public root certificate for the app
-containers to trust:
-
-```powershell
-New-Item -ItemType Directory -Force secrets | Out-Null
-docker compose up -d pm2-mcp-proxy
-docker cp pm2-mcp-proxy:/data/caddy/pki/authorities/local/root.crt ./secrets/pm2-mcp-root.crt
-```
-
-The checked-in [Caddyfile](deploy/Caddyfile.pm2-mcp) binds port 8850, accepts only the `/mcp`
-route, requires Basic authentication, and proxies to `127.0.0.1:8486` with a loopback Host header.
-Restrict inbound TCP 8850 with the host firewall to Docker Desktop traffic; do not create a broad
-LAN allow rule. On Windows, Docker Desktop routes container traffic through `com.docker.backend.exe`;
-allow that program on TCP 8850 and remove any broader allow rule for the port:
+Set the same token values as `PM2_MCP_READ_TOKEN` and `PM2_MCP_WRITE_TOKEN` in `app/.env`. Generate
+random values locally, keep `.env` private, and rotate them by changing configuration and restarting
+the server. `PM2_MCP_START_TARGETS_JSON` optionally defines named start targets with fixed script
+paths; callers cannot submit arbitrary scripts or command arguments. Configure a host firewall rule
+for TCP 8486 limited to Docker Desktop traffic (on Linux, the Compose bridge subnet). Docker
+containers connect to `http://host.docker.internal:8486/mcp` through the regular Compose network.
+On Windows, restrict inbound TCP 8486 to Docker Desktop's backend process and remove broader allow
+rules for that port:
 
 ```powershell
 $dockerBackend = Join-Path $env:ProgramFiles "Docker\Docker\com.docker.backend.exe"
 New-NetFirewallRule -DisplayName "PM2 MCP from Docker Desktop" -Direction Inbound `
-  -Action Allow -Protocol TCP -LocalPort 8850 -Program $dockerBackend -Profile Private
+  -Action Allow -Protocol TCP -LocalPort 8486 -Program $dockerBackend -Profile Private
 ```
 
-On Linux, allow TCP 8850 only from the Compose bridge subnet using the host firewall. Caddy's host
-network shares the host network namespace, so keep its Caddyfile and image under review and expose
-no other routes.
+On Linux, inspect the subnet with `docker network inspect app_default`, then allow TCP 8486 only
+from that subnet (for example, `sudo ufw allow from <compose-subnet> to any port 8486 proto tcp`).
+Remove broader allow rules for the port. Never add a general LAN or public firewall exception: the
+Authorization header is plaintext on this HTTP connection.
 
-PM2 process-changing tools (`start`, `stop`, `restart`, `reload`, `save`, and log flush) are
+PM2 process-changing tools (`start`, `stop`, `restart`, and `reload`) are
 filtered from investigator and engineer tool lists. Only the mitigation executor receives them,
 after the human approval checkpoint.
 
@@ -406,58 +385,51 @@ Elasticsearch MCP tests are opt-in and never use the bundled memory server. Conf
 database and test-only service credentials.
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests.test_mcp_e2e -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "test_*.py" -v
 ```
 
-For the host PM2-only e2e checks, keep the host `pm2-mcp` process and Caddy proxy running, set
+For host PM2 e2e checks, keep the owned Node server running and configure
 `RUN_EXTERNAL_MCP_TESTS=1`, `TEST_PM2_MCP_TRANSPORT=streamable_http`,
-`TEST_PM2_MCP_URL=https://localhost:8850/mcp`, and `TEST_PM2_MCP_AUTHORIZATION` in `.env`, then
-run:
+`TEST_PM2_MCP_URL=http://localhost:8486/mcp`, and `TEST_PM2_MCP_READ_TOKEN` in `app/.env`, then run
+from `app/`:
 
 ```powershell
-$env:SSL_CERT_FILE = (Resolve-Path .\secrets\pm2-mcp-root.crt).Path
 python -m unittest `
-  tests.test_mcp_e2e.ExternalMCPTests.test_pm2_server_connects_and_lists_tools `
-  tests.test_mcp_e2e.ExternalMCPTests.test_pm2_http_server_accepts_a_new_session_after_close -v
+  tests.e2e.test_pm2_mcp.PM2MCPExternalTests.test_server_connects_and_lists_tools `
+  tests.e2e.test_pm2_mcp.PM2MCPExternalTests.test_http_server_accepts_a_new_session_after_close -v
 ```
 
-These two checks exercise HTTP tool discovery and reconnection and can run against a Windows-hosted
-server. Run the process-list check only when the server runs on Linux/WSL with an executable `pm2`:
+These checks exercise HTTP tool discovery and reconnection. Run the process-list check on Windows
+or Linux with the owned server:
 
 ```powershell
-python -m unittest tests.test_mcp_e2e.ExternalMCPTests.test_pm2_list_services_tool_returns_a_result -v
+python -m unittest tests.e2e.test_pm2_mcp.PM2MCPExternalTests.test_list_services_tool_returns_a_result -v
 ```
 
-Run all e2e cases (PM2, MySQL, and Elasticsearch) with:
+PM2, MySQL, and Elasticsearch e2e cases are separated into `tests/e2e/test_pm2_mcp.py`,
+`test_mysql_mcp.py`, and `test_elasticsearch_mcp.py`. For an app-side stdio PM2 connection, build
+the owned server, then set `PM2_MCP_TRANSPORT=stdio`, `PM2_MCP_COMMAND=node`,
+`PM2_MCP_ARGS_JSON=["dist/index.js"]`, `PM2_MCP_CWD=../pm2-mcp`, and `PM2_HOME`. The adapter
+passes read-only or write access to each stdio child based on the agent. This mode requires the app
+process to launch the server locally; it cannot bridge from a Docker container to a host process.
+`PM2_MCP_CWD` also selects where the server loads its `.env` file.
+
+Run all e2e cases from `app/` with:
 
 ```powershell
-python -m unittest tests.test_mcp_e2e -v
+python -m unittest discover -s tests/e2e -p "test_*.py" -v
 ```
 
-The full suite includes the PM2 process-list call. On Windows, run that case only after moving the
-host PM2 MCP server to Linux/WSL; otherwise run the HTTP discovery/reconnection checks separately.
-
-To run the e2e tests from Compose, first enable Docker Desktop host networking and complete the
-certificate setup above. Compose overrides the test URL to `https://host.docker.internal:8850/mcp`
-and mounts the CA read-only:
+Compose uses Docker Desktop's normal host gateway mapping; host networking and certificate setup
+are not required. From the repository root, run:
 
 ```powershell
-docker compose run --rm --no-deps --entrypoint python test -m unittest `
-  tests.test_mcp_e2e.ExternalMCPTests.test_pm2_server_connects_and_lists_tools `
-  tests.test_mcp_e2e.ExternalMCPTests.test_pm2_http_server_accepts_a_new_session_after_close -v
+docker compose -f app/docker-compose.yml --project-directory app run --rm test
 ```
 
-The Compose process-list check has the same Linux/WSL host requirement because the MCP server, not
-the test container, executes `pm2`:
-
-```powershell
-docker compose run --rm --no-deps --entrypoint python test -m unittest `
-  tests.test_mcp_e2e.ExternalMCPTests.test_pm2_list_services_tool_returns_a_result -v
-```
-
-Run the full suite in Compose with `docker compose run --rm test`.
-
-The Compose full suite has the same host-platform limitation for the PM2 process-list case.
+The Compose test container connects to `http://host.docker.internal:8486/mcp` and receives
+`TEST_PM2_MCP_READ_TOKEN` from `PM2_MCP_READ_TOKEN` in `app/.env`. Keep the host server running and
+use the same read token in both configurations.
 
 With only PM2 proxy variables configured, MySQL and Elasticsearch e2e cases skip. To run the full
 external suite, configure their `TEST_MYSQL_*` and `TEST_ELASTICSEARCH_*` values for disposable

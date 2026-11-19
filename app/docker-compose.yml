@@ -163,18 +163,6 @@ services:
     ports:
       - "5858:3000"
 
-  pm2-mcp-proxy:
-    image: caddy:2
-    container_name: pm2-mcp-proxy
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      PM2_MCP_PASSWORD_HASH: ${PM2_MCP_PASSWORD_HASH:?Set PM2_MCP_PASSWORD_HASH in .env}
-    volumes:
-      - ./deploy/Caddyfile.pm2-mcp:/etc/caddy/Caddyfile:ro
-      - pm2_mcp_caddy_data:/data
-      - pm2_mcp_caddy_config:/config
-
   api:
     build:
       context: .
@@ -212,14 +200,7 @@ services:
       LITELLM_BASE_URL: http://litellm:4000/v1
       LANGFUSE_HOST: http://langfuse-web:3000
       PM2_MCP_TRANSPORT: streamable_http
-      PM2_MCP_URL: https://host.docker.internal:8850/mcp
-      PM2_MCP_AUTHORIZATION: ${PM2_MCP_AUTHORIZATION:?Set PM2_MCP_AUTHORIZATION in .env}
-      SSL_CERT_FILE: /run/certs/pm2-mcp-root.crt
-    volumes:
-      - type: bind
-        source: ${PM2_MCP_CA_CERT_PATH:?Set PM2_MCP_CA_CERT_PATH in .env}
-        target: /run/certs/pm2-mcp-root.crt
-        read_only: true
+      PM2_MCP_URL: http://host.docker.internal:8486/mcp
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -228,8 +209,6 @@ services:
       postgres:
         condition: service_healthy
       litellm:
-        condition: service_started
-      pm2-mcp-proxy:
         condition: service_started
 
   test:
@@ -245,14 +224,8 @@ services:
       RUN_EXTERNAL_MCP_TESTS: "1"
       PM2_MCP_TRANSPORT: "streamable_http"
       TEST_PM2_MCP_TRANSPORT: "streamable_http"
-      TEST_PM2_MCP_URL: "https://host.docker.internal:8850/mcp"
-      TEST_PM2_MCP_AUTHORIZATION: ${PM2_MCP_AUTHORIZATION:?Set PM2_MCP_AUTHORIZATION in .env}
-      SSL_CERT_FILE: /run/certs/pm2-mcp-root.crt
-    volumes:
-      - type: bind
-        source: ${PM2_MCP_CA_CERT_PATH:?Set PM2_MCP_CA_CERT_PATH in .env}
-        target: /run/certs/pm2-mcp-root.crt
-        read_only: true
+      TEST_PM2_MCP_URL: "http://host.docker.internal:8486/mcp"
+      TEST_PM2_MCP_READ_TOKEN: ${PM2_MCP_READ_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -260,14 +233,10 @@ services:
         condition: service_healthy
       litellm:
         condition: service_started
-      pm2-mcp-proxy:
-        condition: service_started
     command: ["python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"]
 
 volumes:
   postgres_data:
-  pm2_mcp_caddy_data:
-  pm2_mcp_caddy_config:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
   langfuse_minio_data:
