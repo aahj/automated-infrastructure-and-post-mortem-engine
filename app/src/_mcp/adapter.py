@@ -9,27 +9,6 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from constants import Agents
 
-PM2_MUTATING_TOOL_NAMES = frozenset(
-    {
-        "restart_service",
-        "stop_service",
-        "start_service",
-        "reload_service",
-        "save",
-        "flush_logs",
-        # Names exposed by the previous Node PM2 MCP server.
-        "pm2_start_process",
-        "pm2_restart_process",
-        "pm2_reload_process",
-        "pm2_stop_process",
-        "pm2_delete_process",
-        "pm2_flush_logs",
-        "pm2_reload_logs",
-        "pm2_dump",
-        "pm2_kill_daemon",
-    }
-)
-
 
 def _parse_command_args(
     environment: Mapping[str, str], variable_name: str, default: list[str]
@@ -201,7 +180,4 @@ async def get_tools(agent: Agents, server_name: str | None = None):
     client = mcp_clients.get(agent)
     if client is None:
         return None
-    tools = await client.get_tools(server_name=server_name)
-    if agent == Agents.MITIGATION_EXECUTOR:
-        return tools
-    return [tool for tool in tools if getattr(tool, "name", None) not in PM2_MUTATING_TOOL_NAMES]
+    return await client.get_tools(server_name=server_name)
