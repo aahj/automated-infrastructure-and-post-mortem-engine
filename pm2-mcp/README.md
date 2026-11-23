@@ -21,28 +21,27 @@ Set `PM2_HOME` explicitly to the PM2 state directory to manage, and configure di
 PM2 runs in no-daemon mode if no existing daemon is available. Set
 `PM2_MCP_ALLOW_DAEMON_START=true` to permit the server to create a persistent daemon.
 
-```powershell
+```bash
 npm ci
-$env:PM2_HOME = "$env:USERPROFILE\.pm2"
-$env:PM2_MCP_READ_TOKEN = "<long-random-read-token>"
-$env:PM2_MCP_WRITE_TOKEN = "<different-long-random-write-token>"
+export PM2_HOME="$HOME/.pm2"
+export PM2_MCP_READ_TOKEN="<long-random-read-token>"
+export PM2_MCP_WRITE_TOKEN="<different-long-random-write-token>"
 npm run build
 npm start
 ```
 
-Linux/macOS shells use the same variables with `export`. Set `PM2_MCP_TRANSPORT=stdio` to run
-stdio mode; it is read-only unless `PM2_MCP_STDIO_ACCESS=write` is set. Console diagnostics are
-written to stderr so stdio MCP protocol messages on stdout remain clean. Logs include lifecycle,
-tool name, duration, and denial reason, but omit credentials and tool arguments. Optional
-`PM2_MCP_START_TARGETS_JSON` maps approved service names to fixed `{ "script": "..." }`
-definitions for `start_service`.
+Set `PM2_MCP_TRANSPORT=stdio` to run stdio mode; it is read-only unless
+`PM2_MCP_STDIO_ACCESS=write` is set. Console diagnostics are written to stderr so stdio MCP protocol
+messages on stdout remain clean. Logs include lifecycle, tool name, duration, and denial reason, but
+omit credentials and tool arguments. Optional `PM2_MCP_START_TARGETS_JSON` maps approved service names
+to fixed `{ "script": "..." }` definitions for `start_service`.
 HTTP requests are also checked against `PM2_MCP_ALLOWED_HOSTS`, a comma-separated hostname list.
 It defaults to `localhost,127.0.0.1,host.docker.internal`; add a hostname if clients connect using
 another host name or IP. Requests with an Origin header must use the same hostname as the Host header.
 
 ## Tests
 
-```powershell
+```bash
 npm ci
 npm run build
 npm run compile-tests

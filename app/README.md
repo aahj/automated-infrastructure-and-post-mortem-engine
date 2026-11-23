@@ -275,14 +275,14 @@ Install Node.js 20 or newer on the host. Configure `PM2_HOME` to the directory t
 processes to manage, and set two different random tokens of at least 32 characters. The server
 requires an explicit PM2 home so it cannot silently connect to a default PM2 state directory.
 Daemon startup is disabled by default; set `PM2_MCP_ALLOW_DAEMON_START=true` only when you want the
-server to create a persistent PM2 daemon if one is not already running. In PowerShell:
+server to create a persistent PM2 daemon if one is not already running. On Linux/macOS:
 
-```powershell
-cd ..\pm2-mcp
+```bash
+cd ../pm2-mcp
 npm ci
-$env:PM2_HOME = "$env:USERPROFILE\.pm2"
-$env:PM2_MCP_READ_TOKEN = "<long-random-read-token>"
-$env:PM2_MCP_WRITE_TOKEN = "<different-long-random-write-token>"
+export PM2_HOME="$HOME/.pm2"
+export PM2_MCP_READ_TOKEN="<long-random-read-token>"
+export PM2_MCP_WRITE_TOKEN="<different-long-random-write-token>"
 npm run build
 npm start
 ```
@@ -293,19 +293,16 @@ the server. `PM2_MCP_START_TARGETS_JSON` optionally defines named start targets 
 paths; callers cannot submit arbitrary scripts or command arguments. Configure a host firewall rule
 for TCP 8486 limited to Docker Desktop traffic (on Linux, the Compose bridge subnet). Docker
 containers connect to `http://host.docker.internal:8486/mcp` through the regular Compose network.
-On Windows, restrict inbound TCP 8486 to Docker Desktop's backend process and remove broader allow
+On Linux, restrict inbound TCP 8486 to the Docker Compose bridge subnet and remove broader allow
 rules for that port:
 
-```powershell
-$dockerBackend = Join-Path $env:ProgramFiles "Docker\Docker\com.docker.backend.exe"
-New-NetFirewallRule -DisplayName "PM2 MCP from Docker Desktop" -Direction Inbound `
-  -Action Allow -Protocol TCP -LocalPort 8486 -Program $dockerBackend -Profile Private
+```bash
+docker network inspect app_default
+sudo ufw allow from <compose-subnet> to any port 8486 proto tcp
 ```
 
-On Linux, inspect the subnet with `docker network inspect app_default`, then allow TCP 8486 only
-from that subnet (for example, `sudo ufw allow from <compose-subnet> to any port 8486 proto tcp`).
-Remove broader allow rules for the port. Never add a general LAN or public firewall exception: the
-Authorization header is plaintext on this HTTP connection.
+Never add a general LAN or public firewall exception: the Authorization header is plaintext on this
+HTTP connection.
 
 PM2 process-changing tools (`start`, `stop`, `restart`, and `reload`) are
 filtered from investigator and engineer tool lists. Only the mitigation executor receives them,
@@ -343,13 +340,11 @@ Use separate, least-privilege credentials for investigation and mitigation in pr
 adapter passes the same MySQL credentials to read-only and mutation-capable agents, so database-side
 permissions remain an essential safety boundary.
 
-Start the LiteLLM proxy with the configured model using Docker Compose, then verify its
-OpenAI-compatible endpoint:
+Start the PostgreSQL and LiteLLM services with Docker Compose, then verify the LiteLLM endpoint:
 
-```powershell
-docker compose up -d
+```bash
+docker compose up -d postgres litellm
 curl http://localhost:4000/health/liveliness
-curl http://localhost:8000/docs
 ```
 
 The Compose service mounts the repository-root `litellm-config.yaml` at `/app/config.yaml` and runs the
@@ -358,14 +353,6 @@ file available before starting the service. Processes running on the host use
 `http://localhost:4000/v1`; containers in this Compose project should use
 `http://litellm:4000/v1`. The `host.docker.internal` mapping lets the proxy reach host-running
 providers such as Ollama when referenced by `config.yaml`.
-
-The API runs at `http://localhost:8000`, and the worker runs as a separate Compose service. Both
-services use the Compose PostgreSQL and LiteLLM service names internally. Apply database migrations
-from the project environment before processing incidents:
-
-```powershell
-python src/db/db.py
-```
 
 ### 3. Initialize PostgreSQL
 
@@ -384,8 +371,8 @@ The default test suite mocks MCP handshakes and does not start external services
 Elasticsearch MCP tests are opt-in and never use the bundled memory server. Configure a disposable
 database and test-only service credentials.
 
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests/e2e -p "test_*.py" -v
+```bash
+python -m unittest discover -s tests/e2e -p "test_*.py" -v
 ```
 
 For host PM2 e2e checks, keep the owned Node server running and configure
@@ -393,16 +380,16 @@ For host PM2 e2e checks, keep the owned Node server running and configure
 `TEST_PM2_MCP_URL=http://localhost:8486/mcp`, and `TEST_PM2_MCP_READ_TOKEN` in `app/.env`, then run
 from `app/`:
 
-```powershell
-python -m unittest `
-  tests.e2e.test_pm2_mcp.PM2MCPExternalTests.test_server_connects_and_lists_tools `
+```bash
+python -m unittest \
+  tests.e2e.test_pm2_mcp.PM2MCPExternalTests.test_server_connects_and_lists_tools \
   tests.e2e.test_pm2_mcp.PM2MCPExternalTests.test_http_server_accepts_a_new_session_after_close -v
 ```
 
-These checks exercise HTTP tool discovery and reconnection. Run the process-list check on Windows
-or Linux with the owned server:
+These checks exercise HTTP tool discovery and reconnection. Run the process-list check with the owned
+server:
 
-```powershell
+```bash
 python -m unittest tests.e2e.test_pm2_mcp.PM2MCPExternalTests.test_list_services_tool_returns_a_result -v
 ```
 
@@ -414,16 +401,10 @@ passes read-only or write access to each stdio child based on the agent. This mo
 process to launch the server locally; it cannot bridge from a Docker container to a host process.
 `PM2_MCP_CWD` also selects where the server loads its `.env` file.
 
-Run all e2e cases from `app/` with:
-
-```powershell
-python -m unittest discover -s tests/e2e -p "test_*.py" -v
-```
-
 Compose uses Docker Desktop's normal host gateway mapping; host networking and certificate setup
 are not required. From the repository root, run:
 
-```powershell
+```bash
 docker compose -f app/docker-compose.yml --project-directory app run --rm test
 ```
 
@@ -521,9 +502,9 @@ trusted network; the application does not provide authentication itself.
 
 - `postgres`: persistent PostgreSQL queue and checkpoint storage;
 - `litellm`: OpenAI-compatible model proxy configured by the mounted `litellm-config.yaml`;
-- `langfuse-web`: self-hosted Langfuse UI and API, exposed on host port `3000`;
+- `langfuse-web`: self-hosted Langfuse UI and API, exposed on host port `5858`;
 - `langfuse-worker`: Langfuse background processing;
-- `clickhouse`, `redis`, and `minio`: Langfuse tracing dependencies; and
+- `clickhouse`, `redis`, and `minio`: Langfuse tracing dependencies;
 - `api`: FastAPI ingress and approval API, exposed on host port `8000`; and
 - `worker`: independent queue-processing service using the same application release.
 
@@ -546,14 +527,14 @@ host.
    into either image.
 4. Pull the base images and build the application images:
 
-   ```powershell
+   ```bash
    docker compose pull postgres litellm
    docker compose build --pull api worker
    ```
 
 5. Start PostgreSQL, LiteLLM, and the Langfuse backing services first:
 
-   ```powershell
+   ```bash
    docker compose up -d postgres litellm clickhouse redis minio
    ```
 
@@ -563,35 +544,35 @@ host.
 
 7. Start Langfuse and apply the incident-engine database migrations:
 
-   ```powershell
+   ```bash
    docker compose up -d langfuse-web langfuse-worker
    docker compose run --rm api python src/db/db.py
    ```
 
 8. Start the API and worker:
 
-   ```powershell
+   ```bash
    docker compose up -d api worker
    ```
 
 9. Verify service health and API reachability before sending production traffic:
 
-   ```powershell
+   ```bash
    curl http://localhost:4000/health/liveliness
-   curl http://localhost:3000/api/public/health
+   curl http://localhost:5858/api/public/health
    curl http://localhost:8000/docs
    docker compose ps
    ```
 
 10. Send a non-production alert through the approve/reject flow and inspect the service logs:
 
-   ```powershell
+   ```bash
    docker compose logs --tail=200 api worker litellm
    ```
 
 To deploy a new release, rebuild the application images and recreate the services:
 
-```powershell
+```bash
 docker compose build --pull api worker
 docker compose up -d --force-recreate api worker
 docker compose run --rm api python src/db/db.py
@@ -599,7 +580,7 @@ docker compose run --rm api python src/db/db.py
 
 To stop the application while retaining PostgreSQL data:
 
-```powershell
+```bash
 docker compose down
 ```
 
