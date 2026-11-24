@@ -176,6 +176,8 @@ services:
       POSTGRES_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       LITELLM_BASE_URL: http://litellm:4000/v1
       LANGFUSE_HOST: http://langfuse-web:3000
+      MYSQL_MCP_COMMAND: mdev-mysql-mcp-server
+      MYSQL_MCP_ARGS_JSON: "[]"
     depends_on:
       test:
         condition: service_completed_successfully
@@ -199,6 +201,8 @@ services:
       POSTGRES_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       LITELLM_BASE_URL: http://litellm:4000/v1
       LANGFUSE_HOST: http://langfuse-web:3000
+      MYSQL_MCP_COMMAND: mdev-mysql-mcp-server
+      MYSQL_MCP_ARGS_JSON: "[]"
       PM2_MCP_TRANSPORT: streamable_http
       PM2_MCP_URL: http://host.docker.internal:8486/mcp
     extra_hosts:
@@ -222,6 +226,8 @@ services:
       - .env
     environment:
       RUN_EXTERNAL_MCP_TESTS: "1"
+      TEST_MYSQL_MCP_COMMAND: mdev-mysql-mcp-server
+      TEST_MYSQL_MCP_ARGS_JSON: "[]"
       PM2_MCP_TRANSPORT: "streamable_http"
       TEST_PM2_MCP_TRANSPORT: "streamable_http"
       TEST_PM2_MCP_URL: "http://host.docker.internal:8486/mcp"

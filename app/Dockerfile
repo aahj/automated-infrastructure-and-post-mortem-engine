@@ -3,6 +3,8 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir uv
+ENV PATH="/root/.local/bin:${PATH}"
+RUN uv tool install --with "mcp<2" mdev-mysql-mcp-server
 
 FROM base as api
 COPY main.py ./
